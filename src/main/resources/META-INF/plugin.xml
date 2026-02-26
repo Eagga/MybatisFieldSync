@@ -1,0 +1,28 @@
+<idea-plugin>
+    <id>com.eagga.mybatis-field-sync</id>
+    <name>MyBatis Field Sync</name>
+    <vendor email="support@example.com" url="https://example.com">eagga</vendor>
+
+    <description><![CDATA[
+    Synchronize selected Java entity fields into MyBatis mapper XML statements.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+
+    <resource-bundle>messages.MyBatisFieldSyncBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="MyBatis Field Sync" displayType="BALLOON" isLogByDefault="true"/>
+        <projectService serviceImplementation="com.eagga.mybatisfieldsync.service.FieldSyncService"/>
+    </extensions>
+
+    <actions>
+        <action id="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
+                class="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
+                text="Sync Fields to MyBatis XML"
+                description="Select entity fields and sync to MyBatis XML statement">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

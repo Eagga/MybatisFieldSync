@@ -1,0 +1,23 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="2" y="2" width="36" height="36" rx="9" fill="#F3F4F6"/>
+  <rect x="2" y="2" width="36" height="36" rx="9" stroke="#D1D5DB"/>
+
+  <!-- simple mybatis-like bird -->
+  <ellipse cx="21.2" cy="23.4" rx="10.4" ry="8.1" fill="#111111"/>
+  <path d="M12.2 24.2C11.2 25.6 10.2 26.4 8.7 26.9C10.4 29.4 13.7 31.2 17.8 31.2C19.5 31.2 21.1 30.9 22.6 30.4C20.4 29.4 18.3 27.8 16.5 25.8C15.1 24.3 13.9 23.8 12.2 24.2Z" fill="#050505"/>
+  <ellipse cx="20.4" cy="20.6" rx="5.4" ry="3.7" fill="#2A2024"/>
+
+  <path d="M12.7 18.8C14.4 16.2 17.5 14.6 21 14.6C24.8 14.6 28.2 16.6 29.7 19.6H14.7L12.7 18.8Z" fill="#E10600"/>
+  <path d="M13.5 14.8C13.7 13.9 14.5 13.2 15.4 13.2H16.7C17.4 13.2 18 12.7 18 12C18 11.1 17.3 10.4 16.4 10.4" stroke="#E10600" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M16.9 14.2C17.2 13.1 18.2 12.3 19.3 12.3H20.5C21.3 12.3 22 11.6 22 10.8C22 9.9 21.2 9.2 20.3 9.2" stroke="#E10600" stroke-width="1.5" stroke-linecap="round"/>
+
+  <ellipse cx="27.1" cy="18.7" rx="2.1" ry="1.8" fill="#F9FAFB"/>
+  <circle cx="27.5" cy="18.8" r="0.8" fill="#111111"/>
+  <path d="M29.8 19.2L31.2 18.7L29.8 18.2" stroke="#111111" stroke-width="0.9" stroke-linecap="round"/>
+
+  <!-- conversion motif (minimal) -->
+  <path d="M9.3 9.8H14.1" stroke="#2563EB" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M12.9 8.5L14.5 9.8L12.9 11.1" stroke="#2563EB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M30.7 30.2H25.9" stroke="#2563EB" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M27.1 28.9L25.5 30.2L27.1 31.5" stroke="#2563EB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
