@@ -15,7 +15,6 @@ import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiField;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
-import com.intellij.psi.PsiPrimitiveType;
 import com.intellij.psi.search.FileTypeIndex;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
@@ -24,6 +23,7 @@ import com.intellij.psi.xml.XmlTag;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
  * 1）收集实体字段；2）定位目标 Mapper XML；3）执行 Statement 同步。
  */
 public final class FieldSyncService {
-    private static final Pattern INSERT_VALUES_PATTERN = Pattern.compile("(?is)\\([^)]*\\)\\s*values\\s*\\([^)]*\\)");
+    private static final Pattern INSERT_VALUES_PATTERN = Pattern.compile("(?is)\\(\\s*[^()]*\\)\\s*values\\s*\\(\\s*[^()]*\\)");
     private static final Set<String> STATEMENT_TAGS = new HashSet<>(List.of("insert", "update", "delete", "select", "sql"));
     private final Project project;
 
@@ -221,6 +221,12 @@ public final class FieldSyncService {
         List<String> values = selectedFields.stream().map(this::buildParamPlaceholder).toList();
 
         String statementBody = insertTag.getValue().getText();
+        if (statementBody.contains("<if") || statementBody.contains("</if>")) {
+            if (!mergeInsertWithoutTrimIf(insertTag, selectedFields, allFieldsInOrder)) {
+                throw new SyncException(MyBatisFieldSyncBundle.message("notify.insertComplexUnsupported"));
+            }
+            return;
+        }
         Matcher matcher = INSERT_VALUES_PATTERN.matcher(statementBody);
         if (!matcher.find()) {
             throw new SyncException(MyBatisFieldSyncBundle.message("notify.insertBlockMissing"));
@@ -384,6 +390,52 @@ public final class FieldSyncService {
         }
     }
 
+    private boolean mergeInsertWithoutTrimIf(@NotNull XmlTag insertTag,
+                                             @NotNull List<FieldInfo> selectedFields,
+                                             @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<XmlTag> directIfTags = Arrays.stream(insertTag.getSubTags())
+                .filter(tag -> "if".equalsIgnoreCase(tag.getName()))
+                .toList();
+        if (directIfTags.isEmpty()) {
+            return false;
+        }
+
+        int valueGroupStart = -1;
+        for (int i = 0; i < directIfTags.size(); i++) {
+            if (directIfTags.get(i).getText().contains("#{")) {
+                valueGroupStart = i;
+                break;
+            }
+        }
+        if (valueGroupStart <= 0) {
+            return false;
+        }
+
+        List<XmlTag> columnGroup = directIfTags.subList(0, valueGroupStart);
+        List<XmlTag> valueGroup = directIfTags.subList(valueGroupStart, directIfTags.size());
+        String columnIndent = detectChildIndent(insertTag) + IndentUtil.detectIndentUnit(insertTag.getText());
+        String valueIndent = columnIndent;
+
+        for (FieldInfo field : selectedFields) {
+            if (!containsInIfGroup(columnGroup, field, this::containsColumnEntry)) {
+                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), NameUtil.camelToSnake(field.name()) + ",", columnIndent);
+                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsColumnEntry, columnGroup, valueGroupStart > 0 ? valueGroup.get(0) : null);
+                columnGroup = Arrays.stream(insertTag.getSubTags())
+                        .filter(tag -> "if".equalsIgnoreCase(tag.getName()) && !tag.getText().contains("#{"))
+                        .toList();
+            }
+
+            if (!containsInIfGroup(valueGroup, field, this::containsValueEntry)) {
+                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), buildParamPlaceholder(field) + ",", valueIndent);
+                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsValueEntry, valueGroup, null);
+                valueGroup = Arrays.stream(insertTag.getSubTags())
+                        .filter(tag -> "if".equalsIgnoreCase(tag.getName()) && tag.getText().contains("#{"))
+                        .toList();
+            }
+        }
+        return true;
+    }
+
     private void mergeSetTagWithIfTags(@NotNull XmlTag setTag,
                                        @NotNull List<FieldInfo> selectedFields,
                                        @NotNull List<FieldInfo> allFieldsInOrder) {
@@ -415,6 +467,43 @@ public final class FieldSyncService {
         parent.addBefore(newIfTag, anchor);
     }
 
+    private void insertIfTagByFieldOrderInGroup(@NotNull XmlTag parent,
+                                                @NotNull XmlTag newIfTag,
+                                                @NotNull List<FieldInfo> orderedFields,
+                                                @NotNull FieldInfo currentField,
+                                                @NotNull BiPredicate<String, FieldInfo> matcher,
+                                                @NotNull List<XmlTag> groupTags,
+                                                XmlTag fallbackAnchor) {
+        int currentIndex = orderedFields.indexOf(currentField);
+        XmlTag anchor = findNextIfAnchorInGroup(groupTags, orderedFields, currentIndex, matcher);
+        if (anchor != null) {
+            parent.addBefore(newIfTag, anchor);
+            return;
+        }
+
+        if (!groupTags.isEmpty()) {
+            parent.addAfter(newIfTag, groupTags.get(groupTags.size() - 1));
+            return;
+        }
+
+        if (fallbackAnchor != null) {
+            parent.addBefore(newIfTag, fallbackAnchor);
+            return;
+        }
+        parent.addSubTag(newIfTag, false);
+    }
+
+    private boolean containsInIfGroup(@NotNull List<XmlTag> groupTags,
+                                      @NotNull FieldInfo field,
+                                      @NotNull BiPredicate<String, FieldInfo> matcher) {
+        for (XmlTag tag : groupTags) {
+            if (matcher.test(tag.getText(), field)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private XmlTag findNextIfAnchor(@NotNull XmlTag parent,
                                     @NotNull List<FieldInfo> orderedFields,
                                     int currentIndex,
@@ -428,6 +517,24 @@ public final class FieldSyncService {
                 }
                 if (matcher.test(subTag.getText(), candidateField)) {
                     return subTag;
+                }
+            }
+        }
+        return null;
+    }
+
+    private XmlTag findNextIfAnchorInGroup(@NotNull List<XmlTag> groupTags,
+                                           @NotNull List<FieldInfo> orderedFields,
+                                           int currentIndex,
+                                           @NotNull BiPredicate<String, FieldInfo> matcher) {
+        if (currentIndex < 0) {
+            return null;
+        }
+        for (int i = currentIndex + 1; i < orderedFields.size(); i++) {
+            FieldInfo candidateField = orderedFields.get(i);
+            for (XmlTag groupTag : groupTags) {
+                if (matcher.test(groupTag.getText(), candidateField)) {
+                    return groupTag;
                 }
             }
         }
@@ -476,8 +583,12 @@ public final class FieldSyncService {
     }
 
     private String buildIfTest(@NotNull FieldInfo field) {
-        if (field.psiField().getType() instanceof PsiPrimitiveType) {
-            return "true";
+        String canonicalType = field.psiField().getType().getCanonicalText();
+        if (isNumericPrimitive(canonicalType)) {
+            return field.name() + " != 0";
+        }
+        if (isNumericWrapper(canonicalType)) {
+            return field.name() + " != null and " + field.name() + " != 0";
         }
         if (isStringField(field)) {
             return field.name() + " != null and " + field.name() + " != ''";
@@ -488,6 +599,22 @@ public final class FieldSyncService {
     private boolean isStringField(@NotNull FieldInfo field) {
         String canonicalType = field.psiField().getType().getCanonicalText();
         return "java.lang.String".equals(canonicalType) || "String".equals(field.type());
+    }
+
+    private boolean isNumericPrimitive(@NotNull String canonicalType) {
+        return switch (canonicalType) {
+            case "byte", "short", "int", "long", "float", "double" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isNumericWrapper(@NotNull String canonicalType) {
+        return switch (canonicalType) {
+            case "java.lang.Byte", "java.lang.Short", "java.lang.Integer",
+                 "java.lang.Long", "java.lang.Float", "java.lang.Double",
+                 "java.math.BigDecimal" -> true;
+            default -> false;
+        };
     }
 
     private String appendEntry(@NotNull String body, @NotNull String entry, @NotNull String baseIndent) {
