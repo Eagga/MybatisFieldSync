@@ -5,6 +5,7 @@ import com.eagga.mybatisfieldsync.model.FieldInfo;
 import com.eagga.mybatisfieldsync.model.StatementInfo;
 import com.eagga.mybatisfieldsync.model.SyncException;
 import com.eagga.mybatisfieldsync.util.IndentUtil;
+import com.eagga.mybatisfieldsync.util.FieldIgnoreUtil;
 import com.eagga.mybatisfieldsync.util.JdbcTypeUtil;
 import com.eagga.mybatisfieldsync.util.NameUtil;
 import com.intellij.ide.highlighter.XmlFileType;
@@ -66,6 +67,9 @@ public final class FieldSyncService {
                     continue;
                 }
                 if (result.containsKey(field.getName())) {
+                    continue;
+                }
+                if (FieldIgnoreUtil.shouldIgnore(field)) {
                     continue;
                 }
 
