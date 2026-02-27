@@ -150,7 +150,7 @@ IDEA 根据系统/IDE 语言自动选择资源包。
 ## TODO List
 
 ### 高优先级
-- [ ] 支持按注解忽略字段（如 `@TableField`、`@Transient`）
+- [x] 支持按注解忽略字段（如 `@TableField`、`@Transient`）
 - [ ] 字段同步时保留已有字段的顺序合并新字段
 - [ ] 支持 `resultMap` 的字段映射同步
 
