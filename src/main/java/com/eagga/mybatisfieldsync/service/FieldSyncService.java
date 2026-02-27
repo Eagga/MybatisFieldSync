@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  */
 public final class FieldSyncService {
     private static final Pattern INSERT_VALUES_PATTERN = Pattern.compile("(?is)\\(\\s*[^()]*\\)\\s*values\\s*\\(\\s*[^()]*\\)");
-    private static final Set<String> STATEMENT_TAGS = new HashSet<>(List.of("insert", "update", "delete", "select", "sql"));
+    private static final Set<String> STATEMENT_TAGS = new HashSet<>(List.of("insert", "update", "delete", "select", "sql", "resultMap"));
     private final Project project;
 
     public FieldSyncService(Project project) {
@@ -204,6 +204,11 @@ public final class FieldSyncService {
             return;
         }
 
+        if ("resultMap".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("result")) {
+            syncResultMap(statementTag, selectedFields, allFieldsInOrder);
+            return;
+        }
+
         throw new SyncException(MyBatisFieldSyncBundle.message("notify.unsupported", id));
     }
 
@@ -291,6 +296,88 @@ public final class FieldSyncService {
         if (changed) {
             sqlTag.getValue().setText(body);
         }
+    }
+
+    /**
+     * 同步 resultMap 的 result 标签，保持字段顺序。
+     */
+    private void syncResultMap(@NotNull XmlTag resultMapTag,
+                               @NotNull List<FieldInfo> selectedFields,
+                               @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<XmlTag> resultTags = findNestedTagsByName(resultMapTag, "result");
+
+        // 检测是否已有嵌套的 if 标签
+        boolean hasIfStyle = resultTags.stream().anyMatch(tag -> !findNestedTagsByName(tag, "if").isEmpty());
+
+        // 检测缩进
+        String indent = detectChildIndent(resultMapTag);
+        String childIndent = indent + IndentUtil.detectIndentUnit(resultMapTag.getText());
+
+        String body = resultMapTag.getValue().getText();
+        boolean changed = false;
+
+        for (FieldInfo field : selectedFields) {
+            if (containsResultEntry(body, field)) {
+                continue;
+            }
+
+            String column = NameUtil.camelToSnake(field.name());
+            String property = field.name();
+            String jdbcType = field.jdbcType();
+
+            String entry;
+            if (hasIfStyle) {
+                String testExpr = buildIfTest(field);
+                entry = String.format("\n%s<if test=\"%s\"> %s=%s#{%s,%s} </if>",
+                        childIndent, testExpr, column, property, property, jdbcType);
+            } else {
+                entry = String.format("\n%s<result column=\"%s\" property=\"%s\" jdbcType=\"%s\"/>",
+                        childIndent, column, property, jdbcType);
+            }
+
+            body = insertResultEntryByFieldOrder(body, entry, allFieldsInOrder, field);
+            changed = true;
+        }
+
+        if (changed) {
+            resultMapTag.getValue().setText(body);
+        }
+    }
+
+    private String insertResultEntryByFieldOrder(@NotNull String body,
+                                                 @NotNull String entry,
+                                                 @NotNull List<FieldInfo> orderedFields,
+                                                 @NotNull FieldInfo currentField) {
+        int currentIndex = orderedFields.indexOf(currentField);
+        if (currentIndex < 0) {
+            return body + entry;
+        }
+
+        int anchorLineStart = -1;
+        for (int i = currentIndex + 1; i < orderedFields.size(); i++) {
+            Pattern pattern = resultPatternFor(orderedFields.get(i));
+            Matcher matcher = pattern.matcher(body);
+            if (matcher.find()) {
+                anchorLineStart = findLineStart(body, matcher.start());
+                break;
+            }
+        }
+
+        if (anchorLineStart < 0) {
+            return body + entry;
+        }
+
+        return body.substring(0, anchorLineStart) + entry + body.substring(anchorLineStart);
+    }
+
+    private boolean containsResultEntry(@NotNull String body, @NotNull FieldInfo field) {
+        return resultPatternFor(field).matcher(body).find();
+    }
+
+    private Pattern resultPatternFor(@NotNull FieldInfo field) {
+        String column = NameUtil.camelToSnake(field.name());
+        String property = field.name();
+        return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s+property=\"" + Pattern.quote(property) + "\"");
     }
 
     private void mergeInsertTrim(@NotNull XmlTag columnTrim,

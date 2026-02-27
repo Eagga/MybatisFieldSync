@@ -15,12 +15,13 @@
   - 按类名同名 XML（`ClassName.xml`）
   - 按 `ClassNameMapper.xml`
   - 按 `mapper namespace` 与类名/全限定名匹配
-- Statement 选择：自动读取 XML 中可用的 `id`
-- Statement 支持多选（可一次同步多个 insert/update/base_column_list）
+- Statement 选择：自动读取 XML 中可用的 `id`（包括 `<resultMap>` 标签）
+- Statement 支持多选（可一次同步多个 insert/update/base_column_list/resultMap）
 - 同步策略：
   - `insert`：优先对 `<trim>` 的列和值做增量补齐并保持对应关系；若已使用 `<if>`，新增项同样使用 `<if>` 风格；无 `trim` 时回退更新 `VALUES` 括号块
   - `update`：优先对 `<set>` 增量补齐；若已使用 `<if>`，新增项同样使用 `<if>` 风格；无 `<set>` 时回退更新 `SET ... WHERE` 区段
   - `base_column_list`：对 `<sql id="...">` 列表做增量补齐
+  - `resultMap`：对 `<resultMap>` 内的 `<result>` 标签做增量补齐，自动生成 `column`、`property`、`jdbcType` 属性
 - 字段格式转换：
   - `userName -> user_name`
   - 参数占位符：`#{userName,jdbcType=VARCHAR}`
@@ -142,17 +143,17 @@ IDEA 根据系统/IDE 语言自动选择资源包。
 
 ## 后续可扩展方向
 
-- 增加”保留现有字段并合并”模式
-- 增加”按注解忽略字段”（如 `@Transient`）
-- 增加对 `where` 条件片段同步
-- 增加更多 Statement 类型模板（批量插入等）
+- 支持 `where` 条件片段同步
+- 增加批量插入语句模板支持
+- 支持自定义 JdbcType 映射配置
+- 提供同步预览功能（先预览再执行）
 
 ## TODO List
 
 ### 高优先级
 - [x] 支持按注解忽略字段（如 `@TableField`、`@Transient`）
-- [ ] 字段同步时保留已有字段的顺序合并新字段
-- [ ] 支持 `resultMap` 的字段映射同步
+- [x] 字段同步时保留已有字段的顺序合并新字段
+- [x] 支持 `resultMap` 的字段映射同步
 
 ### 中优先级
 - [ ] 支持 `where` 条件片段同步
