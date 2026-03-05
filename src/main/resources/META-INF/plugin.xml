@@ -15,8 +15,11 @@
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="MyBatis Field Sync" displayType="BALLOON" isLogByDefault="true"/>
         <projectService serviceImplementation="com.eagga.mybatisfieldsync.service.FieldSyncService"/>
+        <projectService serviceImplementation="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncSettings"/>
+        <projectConfigurable parentId="tools" instance="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncConfigurable"
+                             id="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncConfigurable"
+                             displayName="MyBatis Field Sync"/>
     </extensions>
-
     <actions>
         <action id="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
                 class="com.eagga.mybatisfieldsync.action.SyncFieldsAction"

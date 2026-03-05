@@ -44,8 +44,10 @@ import java.util.regex.Pattern;
  * 1）收集实体字段；2）定位目标 Mapper XML；3）执行 Statement 同步。
  */
 public final class FieldSyncService {
-    private static final Pattern INSERT_VALUES_PATTERN = Pattern.compile("(?is)\\(\\s*[^()]*\\)\\s*values\\s*\\(\\s*[^()]*\\)");
-    private static final Set<String> STATEMENT_TAGS = new HashSet<>(List.of("insert", "update", "delete", "select", "sql", "resultMap"));
+    private static final Pattern INSERT_VALUES_PATTERN = Pattern
+            .compile("(?is)\\(\\s*[^()]*\\)\\s*values\\s*\\(\\s*[^()]*\\)");
+    private static final Set<String> STATEMENT_TAGS = new HashSet<>(
+            List.of("insert", "update", "delete", "select", "sql", "resultMap"));
     private final Project project;
 
     public FieldSyncService(Project project) {
@@ -77,10 +79,9 @@ public final class FieldSyncService {
                         field,
                         field.getName(),
                         field.getType().getPresentableText(),
-                        JdbcTypeUtil.resolveJdbcType(field.getType().getCanonicalText()),
+                        JdbcTypeUtil.resolveJdbcType(project, field.getType().getCanonicalText()),
                         cursor.getName() == null ? "" : cursor.getName(),
-                        inherited
-                ));
+                        inherited));
             }
 
             if (!includeInherited) {
@@ -156,9 +157,9 @@ public final class FieldSyncService {
      * 在写命令中执行单个 Statement 同步，确保支持 IDE 的撤销/重做。
      */
     public void syncInWriteCommand(@NotNull XmlFile xmlFile,
-                                   @NotNull StatementInfo statementInfo,
-                                   @NotNull List<FieldInfo> selectedFields,
-                                   @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+            @NotNull StatementInfo statementInfo,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
         AtomicReference<SyncException> exceptionRef = new AtomicReference<>();
         WriteCommandAction.runWriteCommandAction(project,
                 MyBatisFieldSyncBundle.message("action.syncFields.text"),
@@ -170,8 +171,7 @@ public final class FieldSyncService {
                         exceptionRef.set(e);
                     }
                 },
-                xmlFile
-        );
+                xmlFile);
 
         if (exceptionRef.get() != null) {
             throw exceptionRef.get();
@@ -179,8 +179,8 @@ public final class FieldSyncService {
     }
 
     private void syncStatement(@NotNull StatementInfo statementInfo,
-                               @NotNull List<FieldInfo> selectedFields,
-                               @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
         if (selectedFields.isEmpty()) {
             throw new SyncException(MyBatisFieldSyncBundle.message("notify.noField"));
         }
@@ -190,7 +190,12 @@ public final class FieldSyncService {
         String id = statementInfo.id();
 
         if ("insert".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("insert")) {
-            syncInsert(statementTag, selectedFields, allFieldsInOrder);
+            if (id.toLowerCase(Locale.ROOT).contains("batch")
+                    || !findNestedTagsByName(statementTag, "foreach").isEmpty()) {
+                syncBatchInsert(statementTag, selectedFields, allFieldsInOrder);
+            } else {
+                syncInsert(statementTag, selectedFields, allFieldsInOrder);
+            }
             return;
         }
 
@@ -201,6 +206,11 @@ public final class FieldSyncService {
 
         if ("sql".equals(tagName) && id.toLowerCase(Locale.ROOT).contains("column")) {
             syncBaseColumnList(statementTag, selectedFields, allFieldsInOrder);
+            return;
+        }
+
+        if (id.toLowerCase(Locale.ROOT).contains("where") || !findNestedTagsByName(statementTag, "where").isEmpty()) {
+            syncWhere(statementTag, selectedFields, allFieldsInOrder);
             return;
         }
 
@@ -218,8 +228,8 @@ public final class FieldSyncService {
      * - 回退：替换普通 SQL 文本中的 "(...) VALUES (...)" 片段
      */
     private void syncInsert(@NotNull XmlTag insertTag,
-                            @NotNull List<FieldInfo> selectedFields,
-                            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
         List<XmlTag> trimTags = findNestedTagsByName(insertTag, "trim");
         if (trimTags.size() >= 2) {
             mergeInsertTrim(trimTags.get(0), trimTags.get(1), selectedFields, allFieldsInOrder);
@@ -251,9 +261,125 @@ public final class FieldSyncService {
      * - 优先：对 set 标签做增量补齐（若已使用 if，则新增项也使用 if）
      * - 回退：改写 "SET ... WHERE" 文本区间
      */
+
+    private void syncBatchInsert(@NotNull XmlTag insertTag,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+        List<XmlTag> foreachTags = findNestedTagsByName(insertTag, "foreach");
+        if (foreachTags.isEmpty()) {
+            throw new SyncException("Batch insert statement must contain <foreach> tag");
+        }
+        XmlTag foreachTag = foreachTags.get(0);
+        String itemRaw = foreachTag.getAttributeValue("item");
+        final String item = (itemRaw == null || itemRaw.isBlank()) ? "item" : itemRaw;
+
+        List<XmlTag> trimTags = findNestedTagsByName(insertTag, "trim");
+        if (trimTags.size() >= 2) {
+            mergeBatchInsertTrim(trimTags.get(0), trimTags.get(1), item, selectedFields, allFieldsInOrder);
+            return;
+        }
+
+        if (trimTags.size() == 1) {
+            List<XmlTag> foreachTrims = findNestedTagsByName(foreachTag, "trim");
+            if (!foreachTrims.isEmpty()) {
+                mergeBatchInsertTrim(trimTags.get(0), foreachTrims.get(0), item, selectedFields, allFieldsInOrder);
+                return;
+            }
+        }
+
+        List<String> columns = selectedFields.stream().map(field -> NameUtil.camelToSnake(field.name())).toList();
+        List<String> values = selectedFields.stream().map(field -> buildBatchParamPlaceholder(field, item)).toList();
+
+        // simple regex replacement
+        String insertText = insertTag.getValue().getText();
+        String cols = "(" + String.join(", ", columns) + ")";
+        String rawColRe = "(?is)(\\(\\s*[^()]*\\))(\\s*values)";
+        Matcher cm = Pattern.compile(rawColRe).matcher(insertText);
+
+        if (cm.find()) {
+            insertText = cm.replaceFirst(Matcher.quoteReplacement(cols + cm.group(2)));
+        } else {
+            // just replace first (...)
+            Matcher cm2 = Pattern.compile("(?is)\\(\\s*[^()]*\\)").matcher(insertText);
+            if (cm2.find()) {
+                insertText = cm2.replaceFirst(Matcher.quoteReplacement(cols));
+            } else {
+                throw new SyncException("Cannot find (...) block for columns in batch insert");
+            }
+        }
+
+        insertTag.getValue().setText(insertText);
+
+        // foreach part should have been preserved, now replace its values
+        foreachTags = findNestedTagsByName(insertTag, "foreach");
+        if (!foreachTags.isEmpty()) {
+            XmlTag newForeach = foreachTags.get(0);
+            String foreachText = newForeach.getValue().getText();
+            String vals = "(" + String.join(", ", values) + ")";
+            Matcher vm = Pattern.compile("(?is)\\(\\s*[^()]*\\)").matcher(foreachText);
+            if (vm.find()) {
+                newForeach.getValue().setText(vm.replaceFirst(Matcher.quoteReplacement(vals)));
+            } else {
+                newForeach.getValue().setText(vals); // or just set it
+            }
+        }
+    }
+
+    private void mergeBatchInsertTrim(@NotNull XmlTag columnTrim,
+            @NotNull XmlTag valueTrim,
+            @NotNull String item,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        String columnBody = columnTrim.getValue().getText();
+        String valueBody = valueTrim.getValue().getText();
+        String columnIndent = detectEntryIndent(columnBody);
+        String valueIndent = detectEntryIndent(valueBody);
+
+        boolean changed = false;
+        for (FieldInfo field : selectedFields) {
+            if (!containsColumnEntry(columnBody, field)) {
+                columnBody = insertPlainEntryByFieldOrder(
+                        columnBody,
+                        NameUtil.camelToSnake(field.name()) + ",",
+                        columnIndent,
+                        allFieldsInOrder,
+                        field,
+                        this::columnPatternFor);
+                changed = true;
+            }
+            if (!containsBatchValueEntry(valueBody, field, item)) {
+                valueBody = insertPlainEntryByFieldOrder(
+                        valueBody,
+                        buildBatchParamPlaceholder(field, item) + ",",
+                        valueIndent,
+                        allFieldsInOrder,
+                        field,
+                        f -> batchValuePatternFor(f, item));
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            columnTrim.getValue().setText(columnBody);
+            valueTrim.getValue().setText(valueBody);
+        }
+    }
+
+    private String buildBatchParamPlaceholder(@NotNull FieldInfo fieldInfo, @NotNull String item) {
+        return "#{" + item + "." + fieldInfo.name() + ",jdbcType=" + fieldInfo.jdbcType() + "}";
+    }
+
+    private boolean containsBatchValueEntry(@NotNull String body, @NotNull FieldInfo field, @NotNull String item) {
+        return batchValuePatternFor(field, item).matcher(body).find();
+    }
+
+    private Pattern batchValuePatternFor(@NotNull FieldInfo field, @NotNull String item) {
+        return Pattern.compile("#\\{\\s*" + Pattern.quote(item + "." + field.name()) + "\\b");
+    }
+
     private void syncUpdate(@NotNull XmlTag updateTag,
-                            @NotNull List<FieldInfo> selectedFields,
-                            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
         List<XmlTag> setTags = findNestedTagsByName(updateTag, "set");
         if (!setTags.isEmpty()) {
             mergeSetTag(setTags.get(0), selectedFields, allFieldsInOrder);
@@ -272,14 +398,40 @@ public final class FieldSyncService {
         }
 
         String indent = IndentUtil.detectIndentUnit(body);
-        String replacement = matcher.group(1) + "\n" + indent + String.join(",\n" + indent, assignments) + "\n" + matcher.group(3);
+        String replacement = matcher.group(1) + "\n" + indent + String.join(",\n" + indent, assignments) + "\n"
+                + matcher.group(3);
         String updated = matcher.replaceFirst(Matcher.quoteReplacement(replacement));
         updateTag.getValue().setText(updated);
     }
 
+    private void syncWhere(@NotNull XmlTag whereTagOwner,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<XmlTag> nestedWhere = findNestedTagsByName(whereTagOwner, "where");
+        XmlTag targetTag = nestedWhere.isEmpty() ? whereTagOwner : nestedWhere.get(0);
+
+        String indent = detectChildIndent(targetTag);
+        String childIndent = indent + IndentUtil.detectIndentUnit(targetTag.getText());
+
+        for (FieldInfo field : selectedFields) {
+            if (containsWhereCondition(targetTag.getText(), field)) {
+                continue;
+            }
+            String condition = "and " + NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field);
+            XmlTag ifTag = createIfTag(targetTag, buildIfTest(field), condition, childIndent);
+            insertIfTagByFieldOrder(targetTag, ifTag, allFieldsInOrder, field, this::containsWhereCondition);
+        }
+    }
+
+    private boolean containsWhereCondition(@NotNull String body, @NotNull FieldInfo field) {
+        return Pattern
+                .compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(NameUtil.camelToSnake(field.name())) + "`?\\\\s*=")
+                .matcher(body).find();
+    }
+
     private void syncBaseColumnList(@NotNull XmlTag sqlTag,
-                                    @NotNull List<FieldInfo> selectedFields,
-                                    @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         String body = sqlTag.getValue().getText();
         String baseIndent = detectEntryIndent(body);
         boolean changed = false;
@@ -289,7 +441,8 @@ public final class FieldSyncService {
                 continue;
             }
             String entry = NameUtil.camelToSnake(field.name()) + ",";
-            body = insertPlainEntryByFieldOrder(body, entry, baseIndent, allFieldsInOrder, field, this::columnPatternFor);
+            body = insertPlainEntryByFieldOrder(body, entry, baseIndent, allFieldsInOrder, field,
+                    this::columnPatternFor);
             changed = true;
         }
 
@@ -302,8 +455,8 @@ public final class FieldSyncService {
      * 同步 resultMap 的 result 标签，保持字段顺序。
      */
     private void syncResultMap(@NotNull XmlTag resultMapTag,
-                               @NotNull List<FieldInfo> selectedFields,
-                               @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         List<XmlTag> resultTags = findNestedTagsByName(resultMapTag, "result");
 
         // 检测是否已有嵌套的 if 标签
@@ -345,9 +498,9 @@ public final class FieldSyncService {
     }
 
     private String insertResultEntryByFieldOrder(@NotNull String body,
-                                                 @NotNull String entry,
-                                                 @NotNull List<FieldInfo> orderedFields,
-                                                 @NotNull FieldInfo currentField) {
+            @NotNull String entry,
+            @NotNull List<FieldInfo> orderedFields,
+            @NotNull FieldInfo currentField) {
         int currentIndex = orderedFields.indexOf(currentField);
         if (currentIndex < 0) {
             return body + entry;
@@ -377,13 +530,14 @@ public final class FieldSyncService {
     private Pattern resultPatternFor(@NotNull FieldInfo field) {
         String column = NameUtil.camelToSnake(field.name());
         String property = field.name();
-        return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s+property=\"" + Pattern.quote(property) + "\"");
+        return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s+property=\""
+                + Pattern.quote(property) + "\"");
     }
 
     private void mergeInsertTrim(@NotNull XmlTag columnTrim,
-                                 @NotNull XmlTag valueTrim,
-                                 @NotNull List<FieldInfo> selectedFields,
-                                 @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull XmlTag valueTrim,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         boolean columnHasIfStyle = hasNestedTagByName(columnTrim, "if");
         boolean valueHasIfStyle = hasNestedTagByName(valueTrim, "if");
 
@@ -406,8 +560,7 @@ public final class FieldSyncService {
                         columnIndent,
                         allFieldsInOrder,
                         field,
-                        this::columnPatternFor
-                );
+                        this::columnPatternFor);
                 changed = true;
             }
             if (!containsValueEntry(valueBody, field)) {
@@ -417,8 +570,7 @@ public final class FieldSyncService {
                         valueIndent,
                         allFieldsInOrder,
                         field,
-                        this::valuePatternFor
-                );
+                        this::valuePatternFor);
                 changed = true;
             }
         }
@@ -430,8 +582,8 @@ public final class FieldSyncService {
     }
 
     private void mergeSetTag(@NotNull XmlTag setTag,
-                             @NotNull List<FieldInfo> selectedFields,
-                             @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         boolean hasIfStyle = hasNestedTagByName(setTag, "if");
         if (hasIfStyle) {
             mergeSetTagWithIfTags(setTag, selectedFields, allFieldsInOrder);
@@ -446,7 +598,8 @@ public final class FieldSyncService {
                 continue;
             }
             String entry = NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field) + ",";
-            body = insertPlainEntryByFieldOrder(body, entry, indent, allFieldsInOrder, field, this::assignmentPatternFor);
+            body = insertPlainEntryByFieldOrder(body, entry, indent, allFieldsInOrder, field,
+                    this::assignmentPatternFor);
             changed = true;
         }
 
@@ -460,9 +613,9 @@ public final class FieldSyncService {
     }
 
     private void mergeInsertTrimWithIfTags(@NotNull XmlTag columnTrim,
-                                           @NotNull XmlTag valueTrim,
-                                           @NotNull List<FieldInfo> selectedFields,
-                                           @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull XmlTag valueTrim,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         String columnIndent = detectChildIndent(columnTrim);
         String valueIndent = detectChildIndent(valueTrim);
         String columnChildIndent = columnIndent + IndentUtil.detectIndentUnit(columnTrim.getText());
@@ -470,20 +623,22 @@ public final class FieldSyncService {
 
         for (FieldInfo field : selectedFields) {
             if (!containsColumnEntry(columnTrim.getText(), field)) {
-                XmlTag ifTag = createIfTag(columnTrim, buildIfTest(field), NameUtil.camelToSnake(field.name()) + ",", columnChildIndent);
+                XmlTag ifTag = createIfTag(columnTrim, buildIfTest(field), NameUtil.camelToSnake(field.name()) + ",",
+                        columnChildIndent);
                 insertIfTagByFieldOrder(columnTrim, ifTag, allFieldsInOrder, field, this::containsColumnEntry);
             }
 
             if (!containsValueEntry(valueTrim.getText(), field)) {
-                XmlTag ifTag = createIfTag(valueTrim, buildIfTest(field), buildParamPlaceholder(field) + ",", valueChildIndent);
+                XmlTag ifTag = createIfTag(valueTrim, buildIfTest(field), buildParamPlaceholder(field) + ",",
+                        valueChildIndent);
                 insertIfTagByFieldOrder(valueTrim, ifTag, allFieldsInOrder, field, this::containsValueEntry);
             }
         }
     }
 
     private boolean mergeInsertWithoutTrimIf(@NotNull XmlTag insertTag,
-                                             @NotNull List<FieldInfo> selectedFields,
-                                             @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         List<XmlTag> directIfTags = Arrays.stream(insertTag.getSubTags())
                 .filter(tag -> "if".equalsIgnoreCase(tag.getName()))
                 .toList();
@@ -509,16 +664,20 @@ public final class FieldSyncService {
 
         for (FieldInfo field : selectedFields) {
             if (!containsInIfGroup(columnGroup, field, this::containsColumnEntry)) {
-                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), NameUtil.camelToSnake(field.name()) + ",", columnIndent);
-                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsColumnEntry, columnGroup, valueGroupStart > 0 ? valueGroup.get(0) : null);
+                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), NameUtil.camelToSnake(field.name()) + ",",
+                        columnIndent);
+                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsColumnEntry,
+                        columnGroup, valueGroupStart > 0 ? valueGroup.get(0) : null);
                 columnGroup = Arrays.stream(insertTag.getSubTags())
                         .filter(tag -> "if".equalsIgnoreCase(tag.getName()) && !tag.getText().contains("#{"))
                         .toList();
             }
 
             if (!containsInIfGroup(valueGroup, field, this::containsValueEntry)) {
-                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), buildParamPlaceholder(field) + ",", valueIndent);
-                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsValueEntry, valueGroup, null);
+                XmlTag ifTag = createIfTag(insertTag, buildIfTest(field), buildParamPlaceholder(field) + ",",
+                        valueIndent);
+                insertIfTagByFieldOrderInGroup(insertTag, ifTag, allFieldsInOrder, field, this::containsValueEntry,
+                        valueGroup, null);
                 valueGroup = Arrays.stream(insertTag.getSubTags())
                         .filter(tag -> "if".equalsIgnoreCase(tag.getName()) && tag.getText().contains("#{"))
                         .toList();
@@ -528,8 +687,8 @@ public final class FieldSyncService {
     }
 
     private void mergeSetTagWithIfTags(@NotNull XmlTag setTag,
-                                       @NotNull List<FieldInfo> selectedFields,
-                                       @NotNull List<FieldInfo> allFieldsInOrder) {
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
         String indent = detectChildIndent(setTag);
         String childIndent = indent + IndentUtil.detectIndentUnit(setTag.getText());
 
@@ -545,10 +704,10 @@ public final class FieldSyncService {
     }
 
     private void insertIfTagByFieldOrder(@NotNull XmlTag parent,
-                                         @NotNull XmlTag newIfTag,
-                                         @NotNull List<FieldInfo> orderedFields,
-                                         @NotNull FieldInfo currentField,
-                                         @NotNull BiPredicate<String, FieldInfo> matcher) {
+            @NotNull XmlTag newIfTag,
+            @NotNull List<FieldInfo> orderedFields,
+            @NotNull FieldInfo currentField,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
         int currentIndex = orderedFields.indexOf(currentField);
         XmlTag anchor = findNextIfAnchor(parent, orderedFields, currentIndex, matcher);
         if (anchor == null) {
@@ -559,12 +718,12 @@ public final class FieldSyncService {
     }
 
     private void insertIfTagByFieldOrderInGroup(@NotNull XmlTag parent,
-                                                @NotNull XmlTag newIfTag,
-                                                @NotNull List<FieldInfo> orderedFields,
-                                                @NotNull FieldInfo currentField,
-                                                @NotNull BiPredicate<String, FieldInfo> matcher,
-                                                @NotNull List<XmlTag> groupTags,
-                                                XmlTag fallbackAnchor) {
+            @NotNull XmlTag newIfTag,
+            @NotNull List<FieldInfo> orderedFields,
+            @NotNull FieldInfo currentField,
+            @NotNull BiPredicate<String, FieldInfo> matcher,
+            @NotNull List<XmlTag> groupTags,
+            XmlTag fallbackAnchor) {
         int currentIndex = orderedFields.indexOf(currentField);
         XmlTag anchor = findNextIfAnchorInGroup(groupTags, orderedFields, currentIndex, matcher);
         if (anchor != null) {
@@ -585,8 +744,8 @@ public final class FieldSyncService {
     }
 
     private boolean containsInIfGroup(@NotNull List<XmlTag> groupTags,
-                                      @NotNull FieldInfo field,
-                                      @NotNull BiPredicate<String, FieldInfo> matcher) {
+            @NotNull FieldInfo field,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
         for (XmlTag tag : groupTags) {
             if (matcher.test(tag.getText(), field)) {
                 return true;
@@ -596,9 +755,9 @@ public final class FieldSyncService {
     }
 
     private XmlTag findNextIfAnchor(@NotNull XmlTag parent,
-                                    @NotNull List<FieldInfo> orderedFields,
-                                    int currentIndex,
-                                    @NotNull BiPredicate<String, FieldInfo> matcher) {
+            @NotNull List<FieldInfo> orderedFields,
+            int currentIndex,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
         XmlTag[] subTags = parent.getSubTags();
         for (int i = currentIndex + 1; i < orderedFields.size(); i++) {
             FieldInfo candidateField = orderedFields.get(i);
@@ -615,9 +774,9 @@ public final class FieldSyncService {
     }
 
     private XmlTag findNextIfAnchorInGroup(@NotNull List<XmlTag> groupTags,
-                                           @NotNull List<FieldInfo> orderedFields,
-                                           int currentIndex,
-                                           @NotNull BiPredicate<String, FieldInfo> matcher) {
+            @NotNull List<FieldInfo> orderedFields,
+            int currentIndex,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
         if (currentIndex < 0) {
             return null;
         }
@@ -633,9 +792,9 @@ public final class FieldSyncService {
     }
 
     private XmlTag createIfTag(@NotNull XmlTag parent,
-                               @NotNull String testExpr,
-                               @NotNull String bodyLine,
-                               @NotNull String bodyIndent) {
+            @NotNull String testExpr,
+            @NotNull String bodyLine,
+            @NotNull String bodyIndent) {
         XmlTag ifTag = parent.createChildTag("if", null, "\n" + bodyIndent + bodyLine + "\n", false);
         ifTag.setAttribute("test", testExpr);
         return ifTag;
@@ -702,8 +861,9 @@ public final class FieldSyncService {
     private boolean isNumericWrapper(@NotNull String canonicalType) {
         return switch (canonicalType) {
             case "java.lang.Byte", "java.lang.Short", "java.lang.Integer",
-                 "java.lang.Long", "java.lang.Float", "java.lang.Double",
-                 "java.math.BigDecimal" -> true;
+                    "java.lang.Long", "java.lang.Float", "java.lang.Double",
+                    "java.math.BigDecimal" ->
+                true;
             default -> false;
         };
     }
@@ -720,11 +880,11 @@ public final class FieldSyncService {
     }
 
     private String insertPlainEntryByFieldOrder(@NotNull String body,
-                                                @NotNull String entry,
-                                                @NotNull String baseIndent,
-                                                @NotNull List<FieldInfo> orderedFields,
-                                                @NotNull FieldInfo currentField,
-                                                @NotNull Function<FieldInfo, Pattern> patternProvider) {
+            @NotNull String entry,
+            @NotNull String baseIndent,
+            @NotNull List<FieldInfo> orderedFields,
+            @NotNull FieldInfo currentField,
+            @NotNull Function<FieldInfo, Pattern> patternProvider) {
         int currentIndex = orderedFields.indexOf(currentField);
         if (currentIndex < 0) {
             return appendEntry(body, entry, baseIndent);
@@ -811,7 +971,8 @@ public final class FieldSyncService {
     /**
      * 通过精确文件名收集 XML，并保持顺序与唯一性。
      */
-    private void addByFileName(@NotNull Set<XmlFile> files, @NotNull String fileName, @NotNull GlobalSearchScope scope) {
+    private void addByFileName(@NotNull Set<XmlFile> files, @NotNull String fileName,
+            @NotNull GlobalSearchScope scope) {
         var virtualFiles = FilenameIndex.getVirtualFilesByName(project, fileName, scope);
         for (var vf : virtualFiles) {
             PsiFile psiFile = PsiManager.getInstance(project).findFile(vf);

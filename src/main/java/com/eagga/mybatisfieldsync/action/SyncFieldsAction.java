@@ -26,6 +26,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.intellij.psi.PsiFileFactory;
+import com.intellij.psi.xml.XmlTag;
+import com.eagga.mybatisfieldsync.ui.PreviewDialog;
+import com.intellij.openapi.application.ApplicationManager;
 
 /**
  * 字段同步功能的编辑器右键入口动作。
@@ -91,6 +95,37 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
             return;
         }
 
+        // Preview feature
+        XmlFile copyFile = (XmlFile) PsiFileFactory.getInstance(project).createFileFromText(
+                xmlFile.getName(), xmlFile.getFileType(), xmlFile.getText());
+
+        List<String> preFailed = new ArrayList<>();
+        ApplicationManager.getApplication().runWriteAction(() -> {
+            for (StatementInfo stmt : statements) {
+                try {
+                    XmlTag mockTag = findEquivalentTag(copyFile, stmt.tag());
+                    if (mockTag != null) {
+                        StatementInfo mockStmt = new StatementInfo(stmt.id(), stmt.tagName(), mockTag);
+                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder);
+                    }
+                } catch (Exception ex) {
+                    preFailed.add(stmt.id() + ": " + ex.getMessage());
+                }
+            }
+        });
+
+        if (!preFailed.isEmpty() && preFailed.size() == statements.size()) {
+            NotificationUtil.error(project,
+                    MyBatisFieldSyncBundle.message("notify.sync.partialFailed", String.join("; ", preFailed)));
+            return;
+        }
+
+        PreviewDialog previewDialog = new PreviewDialog(project, copyFile.getText());
+        if (!previewDialog.showAndGet()) {
+            return;
+        }
+
+        // Execute actual
         List<String> failedStatements = new ArrayList<>();
         List<String> successStatementIds = new ArrayList<>();
         int successCount = 0;
@@ -107,11 +142,13 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         if (successCount > 0) {
             if (successCount == 1) {
                 NotificationUtil.info(project,
-                        MyBatisFieldSyncBundle.message("notify.sync.success", selectedFields.size(), successStatementIds.get(0)));
+                        MyBatisFieldSyncBundle.message("notify.sync.success", selectedFields.size(),
+                                successStatementIds.get(0)));
             } else {
                 String statementNames = String.join(", ", successStatementIds);
                 NotificationUtil.info(project,
-                        MyBatisFieldSyncBundle.message("notify.sync.success.multi", selectedFields.size(), successCount, statementNames));
+                        MyBatisFieldSyncBundle.message("notify.sync.success.multi", selectedFields.size(), successCount,
+                                statementNames));
             }
         }
 
@@ -155,6 +192,19 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         PsiFile file = e.getData(CommonDataKeys.PSI_FILE);
         if (file instanceof PsiJavaFile javaFile && javaFile.getClasses().length > 0) {
             return javaFile.getClasses()[0];
+        }
+        return null;
+    }
+
+    private XmlTag findEquivalentTag(XmlFile file, XmlTag original) {
+        if (file.getRootTag() == null)
+            return null;
+        for (XmlTag child : file.getRootTag().getSubTags()) {
+            if (original.getName().equals(child.getName()) &&
+                    original.getAttributeValue("id") != null &&
+                    original.getAttributeValue("id").equals(child.getAttributeValue("id"))) {
+                return child;
+            }
         }
         return null;
     }
