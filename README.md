@@ -5,7 +5,7 @@
 ## 功能特性
 
 ### 基础功能
-- 右键触发菜单：`Sync Fields to MyBatis XML`
+- 右键触发菜单：`MyBatis Field Sync` -> `Sync Fields to XML`
 - 仅在 Java 编辑器右键菜单中显示，且限制在类名或空白位置
 - 字段选择对话框：
   - 当前类字段
@@ -27,8 +27,8 @@
 - **`resultMap`**：对 `<resultMap>` 内的 `<result>` 标签做增量补齐，自动生成 `column`、`property`、`jdbcType` 属性
 
 ### 高级功能
-- **CRUD 模板生成**：右键菜单 `Generate MyBatis CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap），支持动态表名 `${tableName}`
-- **同步历史记录**：Tools 菜单 `View MyBatis Sync History` 查看所有同步操作历史，支持清空历史
+- **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap），支持动态表名 `${tableName}`
+- **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
 - **快捷键支持**：
   - `Ctrl+Alt+S`：字段同步
   - `Ctrl+Alt+G`：生成 CRUD 模板
@@ -120,7 +120,7 @@ mybatis-field-sync
 
 #### 字段同步
 1. 打开 Java 实体类文件
-2. 在编辑器类名处或空白处右键，点击 `Sync Fields to MyBatis XML`
+2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Sync Fields to XML`（或按 `Ctrl+Alt+S`）
 3. 在弹窗中：
    - 选择目标 XML 文件
    - 选择目标 Statement ID（支持多选）
@@ -130,7 +130,7 @@ mybatis-field-sync
 
 #### CRUD 模板生成
 1. 打开 Java 实体类文件
-2. 在编辑器类名处或空白处右键，点击 `Generate MyBatis CRUD Template`（或按 `Ctrl+Alt+G`）
+2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Generate CRUD Template`（或按 `Ctrl+Alt+G`）
 3. 选择要生成的模板（ResultMap、Insert、Update、Delete、Select）
 4. 自动在对应的 Mapper XML 中生成标准 CRUD 语句（支持动态表名 `${tableName}`）
 
@@ -140,7 +140,7 @@ mybatis-field-sync
 - **查看历史**：`Ctrl+Alt+H` - 查看所有同步操作历史记录
 
 #### 同步历史记录
-1. 通过菜单 `Tools -> View MyBatis Sync History` 或按 `Ctrl+Alt+H`
+1. 右键选择 `MyBatis Field Sync` -> `View Sync History` 或按 `Ctrl+Alt+H`
 2. 查看所有同步操作的时间、实体类、XML 文件、Statement ID 和字段列表
 3. 可点击 `Clear History` 清空历史记录
 

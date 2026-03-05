@@ -26,26 +26,31 @@
         <multiHostInjector implementation="com.eagga.mybatisfieldsync.injector.MyBatisSqlLanguageInjector"/>
     </extensions>
     <actions>
-        <action id="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
-                class="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
-                text="Sync Fields to MyBatis XML"
-                description="Select entity fields and sync to MyBatis XML statement">
+        <group id="MyBatisFieldSyncGroup" text="MyBatis Field Sync" popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt S"/>
-        </action>
-        <action id="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
-                class="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
-                text="Generate MyBatis CRUD Template"
-                description="Generate standard CRUD statements for entity">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt G"/>
-        </action>
-        <action id="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
-                class="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
-                text="View MyBatis Sync History"
-                description="View synchronization history">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt H"/>
-        </action>
+
+            <action id="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
+                    class="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
+                    text="Sync Fields to XML"
+                    description="Select entity fields and sync to MyBatis XML statement">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt S"/>
+            </action>
+
+            <action id="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
+                    class="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
+                    text="Generate CRUD Template"
+                    description="Generate standard CRUD statements for entity">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt G"/>
+            </action>
+
+            <separator/>
+
+            <action id="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
+                    class="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
+                    text="View Sync History"
+                    description="View synchronization history">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt H"/>
+            </action>
+        </group>
     </actions>
 </idea-plugin>

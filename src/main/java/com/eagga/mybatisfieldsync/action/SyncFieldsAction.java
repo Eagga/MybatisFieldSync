@@ -49,7 +49,6 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         PsiFile psiFile = e.getData(CommonDataKeys.PSI_FILE);
 
         boolean visible = project != null
-                && ActionPlaces.EDITOR_POPUP.equals(e.getPlace())
                 && psiFile instanceof PsiJavaFile
                 && isAllowedPosition(e.getData(CommonDataKeys.PSI_ELEMENT));
 

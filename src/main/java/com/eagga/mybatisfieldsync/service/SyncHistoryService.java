@@ -40,7 +40,7 @@ public final class SyncHistoryService implements PersistentStateComponent<SyncHi
         this.state = state;
     }
 
-    public void addEntry(@NotNull String entityClass, @NotNull String xmlFile,
+    public synchronized void addEntry(@NotNull String entityClass, @NotNull String xmlFile,
                         @NotNull String statementId, @NotNull List<String> fields) {
         HistoryEntry entry = new HistoryEntry();
         entry.timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
@@ -55,11 +55,25 @@ public final class SyncHistoryService implements PersistentStateComponent<SyncHi
         }
     }
 
-    public List<HistoryEntry> getHistory() {
+    public synchronized List<HistoryEntry> getHistory() {
         return new ArrayList<>(state.entries);
     }
 
-    public void clearHistory() {
+    public synchronized void clearHistory() {
         state.entries.clear();
+    }
+
+    public synchronized String getFormattedHistory() {
+        if (state.entries.isEmpty()) {
+            return "No sync history";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (HistoryEntry entry : state.entries) {
+            sb.append(entry.timestamp).append(" | ")
+              .append(entry.entityClass).append(" -> ")
+              .append(entry.xmlFile).append(" [").append(entry.statementId).append("]\n")
+              .append("Fields: ").append(String.join(", ", entry.fields)).append("\n\n");
+        }
+        return sb.toString();
     }
 }
