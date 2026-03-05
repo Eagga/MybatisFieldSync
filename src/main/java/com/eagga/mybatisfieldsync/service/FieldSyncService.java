@@ -159,7 +159,8 @@ public final class FieldSyncService {
     public void syncInWriteCommand(@NotNull XmlFile xmlFile,
             @NotNull StatementInfo statementInfo,
             @NotNull List<FieldInfo> selectedFields,
-            @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
+            @NotNull List<FieldInfo> allFieldsInOrder,
+            @NotNull String entityClassName) throws SyncException {
         AtomicReference<SyncException> exceptionRef = new AtomicReference<>();
         WriteCommandAction.runWriteCommandAction(project,
                 MyBatisFieldSyncBundle.message("action.syncFields.text"),
@@ -176,6 +177,10 @@ public final class FieldSyncService {
         if (exceptionRef.get() != null) {
             throw exceptionRef.get();
         }
+
+        SyncHistoryService historyService = project.getService(SyncHistoryService.class);
+        historyService.addEntry(entityClassName, xmlFile.getName(), statementInfo.id(),
+                selectedFields.stream().map(FieldInfo::name).toList());
     }
 
     private void syncStatement(@NotNull StatementInfo statementInfo,
@@ -386,6 +391,12 @@ public final class FieldSyncService {
             return;
         }
 
+        List<XmlTag> chooseTags = findNestedTagsByName(updateTag, "choose");
+        if (!chooseTags.isEmpty()) {
+            mergeChooseTag(chooseTags.get(0), selectedFields, allFieldsInOrder);
+            return;
+        }
+
         List<String> assignments = selectedFields.stream()
                 .map(field -> NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field))
                 .toList();
@@ -402,6 +413,70 @@ public final class FieldSyncService {
                 + matcher.group(3);
         String updated = matcher.replaceFirst(Matcher.quoteReplacement(replacement));
         updateTag.getValue().setText(updated);
+    }
+
+    private void mergeChooseTag(@NotNull XmlTag chooseTag,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<XmlTag> whenTags = findNestedTagsByName(chooseTag, "when");
+        if (whenTags.isEmpty()) {
+            return;
+        }
+
+        String indent = detectChildIndent(chooseTag);
+        String childIndent = indent + IndentUtil.detectIndentUnit(chooseTag.getText());
+
+        for (FieldInfo field : selectedFields) {
+            if (containsUpdateAssignment(chooseTag.getText(), field)) {
+                continue;
+            }
+
+            String assignment = NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field) + ",";
+            XmlTag whenTag = createWhenTag(chooseTag, buildIfTest(field), assignment, childIndent);
+            insertWhenTagByFieldOrder(chooseTag, whenTag, allFieldsInOrder, field, this::containsUpdateAssignment);
+        }
+    }
+
+    private XmlTag createWhenTag(@NotNull XmlTag parent,
+            @NotNull String testExpr,
+            @NotNull String bodyLine,
+            @NotNull String bodyIndent) {
+        XmlTag whenTag = parent.createChildTag("when", null, "\n" + bodyIndent + bodyLine + "\n", false);
+        whenTag.setAttribute("test", testExpr);
+        return whenTag;
+    }
+
+    private void insertWhenTagByFieldOrder(@NotNull XmlTag parent,
+            @NotNull XmlTag newWhenTag,
+            @NotNull List<FieldInfo> orderedFields,
+            @NotNull FieldInfo currentField,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
+        int currentIndex = orderedFields.indexOf(currentField);
+        XmlTag anchor = findNextWhenAnchor(parent, orderedFields, currentIndex, matcher);
+        if (anchor == null) {
+            parent.addSubTag(newWhenTag, false);
+            return;
+        }
+        parent.addBefore(newWhenTag, anchor);
+    }
+
+    private XmlTag findNextWhenAnchor(@NotNull XmlTag parent,
+            @NotNull List<FieldInfo> orderedFields,
+            int currentIndex,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
+        XmlTag[] subTags = parent.getSubTags();
+        for (int i = currentIndex + 1; i < orderedFields.size(); i++) {
+            FieldInfo candidateField = orderedFields.get(i);
+            for (XmlTag subTag : subTags) {
+                if (!"when".equalsIgnoreCase(subTag.getName())) {
+                    continue;
+                }
+                if (matcher.test(subTag.getText(), candidateField)) {
+                    return subTag;
+                }
+            }
+        }
+        return null;
     }
 
     private void syncWhere(@NotNull XmlTag whereTagOwner,
@@ -425,7 +500,7 @@ public final class FieldSyncService {
 
     private boolean containsWhereCondition(@NotNull String body, @NotNull FieldInfo field) {
         return Pattern
-                .compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(NameUtil.camelToSnake(field.name())) + "`?\\\\s*=")
+                .compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(NameUtil.camelToSnake(field.name())) + "`?\\s*=")
                 .matcher(body).find();
     }
 

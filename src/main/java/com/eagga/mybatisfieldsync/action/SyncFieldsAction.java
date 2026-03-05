@@ -106,7 +106,7 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
                     XmlTag mockTag = findEquivalentTag(copyFile, stmt.tag());
                     if (mockTag != null) {
                         StatementInfo mockStmt = new StatementInfo(stmt.id(), stmt.tagName(), mockTag);
-                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder);
+                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder, targetClass.getName());
                     }
                 } catch (Exception ex) {
                     preFailed.add(stmt.id() + ": " + ex.getMessage());
@@ -131,7 +131,7 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         int successCount = 0;
         for (StatementInfo statement : statements) {
             try {
-                service.syncInWriteCommand(xmlFile, statement, selectedFields, allFieldsInOrder);
+                service.syncInWriteCommand(xmlFile, statement, selectedFields, allFieldsInOrder, targetClass.getName());
                 successCount++;
                 successStatementIds.add(statement.id());
             } catch (SyncException ex) {

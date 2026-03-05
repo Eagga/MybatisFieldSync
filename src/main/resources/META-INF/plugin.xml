@@ -15,10 +15,15 @@
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="MyBatis Field Sync" displayType="BALLOON" isLogByDefault="true"/>
         <projectService serviceImplementation="com.eagga.mybatisfieldsync.service.FieldSyncService"/>
+        <projectService serviceImplementation="com.eagga.mybatisfieldsync.service.CrudTemplateService"/>
+        <projectService serviceImplementation="com.eagga.mybatisfieldsync.service.SyncHistoryService"/>
         <projectService serviceImplementation="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncSettings"/>
         <projectConfigurable parentId="tools" instance="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncConfigurable"
                              id="com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncConfigurable"
                              displayName="MyBatis Field Sync"/>
+        <codeInsight.lineMarkerProvider language="JAVA" implementationClass="com.eagga.mybatisfieldsync.marker.MapperLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="XML" implementationClass="com.eagga.mybatisfieldsync.marker.XmlLineMarkerProvider"/>
+        <multiHostInjector implementation="com.eagga.mybatisfieldsync.injector.MyBatisSqlLanguageInjector"/>
     </extensions>
     <actions>
         <action id="com.eagga.mybatisfieldsync.action.SyncFieldsAction"
@@ -26,6 +31,21 @@
                 text="Sync Fields to MyBatis XML"
                 description="Select entity fields and sync to MyBatis XML statement">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt S"/>
+        </action>
+        <action id="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
+                class="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
+                text="Generate MyBatis CRUD Template"
+                description="Generate standard CRUD statements for entity">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt G"/>
+        </action>
+        <action id="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
+                class="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"
+                text="View MyBatis Sync History"
+                description="View synchronization history">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt H"/>
         </action>
     </actions>
 </idea-plugin>

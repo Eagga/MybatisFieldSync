@@ -34,8 +34,29 @@ public final class FieldIgnoreUtil {
      */
     public static boolean shouldIgnore(@NotNull PsiField field) {
         for (String annotationName : IGNORE_ANNOTATIONS) {
-            if (hasAnnotation(field, annotationName)) {
+            if (annotationName.equals("com.baomidou.mybatisplus.annotation.TableField")) {
+                if (hasTableFieldExistFalse(field)) {
+                    return true;
+                }
+            } else if (hasAnnotation(field, annotationName)) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 检查字段是否有 @TableField(exist=false)
+     */
+    private static boolean hasTableFieldExistFalse(@NotNull PsiField field) {
+        var annotations = field.getAnnotations();
+        for (var annotation : annotations) {
+            String qualifiedName = annotation.getQualifiedName();
+            if (qualifiedName != null && qualifiedName.equals("com.baomidou.mybatisplus.annotation.TableField")) {
+                var existAttr = annotation.findAttributeValue("exist");
+                if (existAttr != null && "false".equals(existAttr.getText())) {
+                    return true;
+                }
             }
         }
         return false;
