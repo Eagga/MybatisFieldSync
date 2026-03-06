@@ -1,14 +1,16 @@
 package com.eagga.mybatisfieldsync.settings;
 
 import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.Service;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@Service(Service.Level.PROJECT)
 @State(name = "MyBatisFieldSyncSettings", storages = @Storage("mybatis-field-sync.xml"))
-public class MyBatisFieldSyncSettings implements PersistentStateComponent<MyBatisFieldSyncSettings.State> {
+public final class MyBatisFieldSyncSettings implements PersistentStateComponent<MyBatisFieldSyncSettings.State> {
     private State myState = new State();
 
     public static class State {
