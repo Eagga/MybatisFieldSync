@@ -17,9 +17,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiIdentifier;
 import com.intellij.psi.PsiJavaFile;
-import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.xml.XmlFile;
 import org.jetbrains.annotations.NotNull;
@@ -50,7 +48,7 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
 
         boolean visible = project != null
                 && psiFile instanceof PsiJavaFile
-                && isAllowedPosition(e.getData(CommonDataKeys.PSI_ELEMENT));
+                && resolveTargetClass(e) != null;
 
         presentation.setEnabledAndVisible(visible);
     }
@@ -155,25 +153,6 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
             NotificationUtil.error(project,
                     MyBatisFieldSyncBundle.message("notify.sync.partialFailed", String.join("; ", failedStatements)));
         }
-    }
-
-    /**
-     * 仅允许在类名或空白区域右键时显示动作。
-     */
-    private boolean isAllowedPosition(PsiElement element) {
-        if (element == null || element instanceof PsiWhiteSpace) {
-            return true;
-        }
-
-        if (element instanceof PsiClass) {
-            return true;
-        }
-
-        if (element instanceof PsiIdentifier identifier && identifier.getParent() instanceof PsiClass psiClass) {
-            return identifier.equals(psiClass.getNameIdentifier());
-        }
-
-        return false;
     }
 
     /**

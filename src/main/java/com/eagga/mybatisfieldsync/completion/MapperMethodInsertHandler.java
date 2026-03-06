@@ -6,6 +6,8 @@ import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.psi.*;
+import com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Set;
 
@@ -24,16 +26,23 @@ public class MapperMethodInsertHandler implements InsertHandler<LookupElement> {
     public void handleInsert(InsertionContext context, LookupElement item) {
         Editor editor = context.getEditor();
         Document document = editor.getDocument();
-        int offset = context.getTailOffset();
-        
-        String methodSignature = generateMethodSignature();
-        document.insertString(offset, methodSignature);
-        editor.getCaretModel().moveToOffset(offset + methodSignature.length());
+        String methodName = item.getLookupString();
+
+        if (isInMethodDeclaration(context)) {
+            int offset = context.getTailOffset();
+            String methodSignature = generateMethodSignature();
+            document.insertString(offset, methodSignature);
+            editor.getCaretModel().moveToOffset(offset + methodSignature.length());
+        } else {
+            String declaration = buildFullMethodDeclaration(methodName);
+            document.replaceString(context.getStartOffset(), context.getTailOffset(), declaration);
+            editor.getCaretModel().moveToOffset(context.getStartOffset() + declaration.length());
+        }
         
         PsiDocumentManager.getInstance(context.getProject()).commitDocument(document);
         
         XmlStatementGenerator.generateXmlStatement(context.getProject(), entityClass, 
-                                                   item.getLookupString(), parseResult);
+                                                   methodName, parseResult);
     }
     
     private String generateMethodSignature() {
@@ -80,5 +89,53 @@ public class MapperMethodInsertHandler implements InsertHandler<LookupElement> {
                 .append(" ")
                 .append(name);
         return paramCount + 1;
+    }
+
+    private boolean isInMethodDeclaration(@NotNull InsertionContext context) {
+        if (hasReturnTypePrefixOnSameLine(context)) {
+            return true;
+        }
+        PsiElement elementAtStart = context.getFile().findElementAt(context.getStartOffset());
+        PsiMethod method = PsiTreeUtil.getParentOfType(elementAtStart, PsiMethod.class);
+        if (method == null) {
+            PsiElement elementAtTail = context.getFile()
+                    .findElementAt(Math.max(0, context.getTailOffset() - 1));
+            method = PsiTreeUtil.getParentOfType(elementAtTail, PsiMethod.class);
+        }
+        return method != null;
+    }
+
+    private boolean hasReturnTypePrefixOnSameLine(@NotNull InsertionContext context) {
+        CharSequence text = context.getDocument().getCharsSequence();
+        int start = context.getStartOffset();
+        int lineStart = start;
+        while (lineStart > 0) {
+            char c = text.charAt(lineStart - 1);
+            if (c == '\n' || c == '\r') {
+                break;
+            }
+            lineStart--;
+        }
+        String prefix = text.subSequence(lineStart, start).toString().trim();
+        if (prefix.isEmpty()) {
+            return false;
+        }
+        if (prefix.endsWith("return")) {
+            return false;
+        }
+        if (prefix.contains("(") || prefix.contains("=") || prefix.contains(",")) {
+            return false;
+        }
+        return prefix.matches(".*[\\w$>\\]]\\s+");
+    }
+
+    private String buildFullMethodDeclaration(String methodName) {
+        String returnType = switch (parseResult.prefix) {
+            case "countBy" -> "long";
+            case "existsBy" -> "boolean";
+            case "deleteBy" -> "int";
+            default -> "java.util.List<" + entityClass.getName() + ">";
+        };
+        return returnType + " " + methodName + generateMethodSignature();
     }
 }

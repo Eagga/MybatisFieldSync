@@ -2,21 +2,26 @@ package com.eagga.mybatisfieldsync.completion;
 
 import com.intellij.codeInsight.completion.*;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.patterns.PlatformPatterns;
+import com.intellij.lang.java.JavaLanguage;
+import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.PsiShortNamesCache;
 import com.intellij.psi.*;
 import com.eagga.mybatisfieldsync.util.FieldIgnoreUtil;
 import com.intellij.util.ProcessingContext;
 import org.jetbrains.annotations.NotNull;
 import java.util.*;
 
-public class MapperMethodCompletionContributor extends CompletionContributor {
+public class MapperMethodCompletionContributor extends CompletionContributor implements DumbAware {
     private static final List<String> SUPPORTED_OPERATORS = List.of(
             "Equals", "GreaterThan", "LessThan", "GreaterThanEqual", "LessThanEqual",
             "Like", "NotLike", "In", "NotIn", "Between", "IsNull", "IsNotNull");
     
     public MapperMethodCompletionContributor() {
         extend(CompletionType.BASIC,
-            PlatformPatterns.psiElement(PsiIdentifier.class),
+            PlatformPatterns.psiElement().withLanguage(JavaLanguage.INSTANCE),
             new CompletionProvider<>() {
                 @Override
                 protected void addCompletions(@NotNull CompletionParameters parameters,
@@ -30,7 +35,7 @@ public class MapperMethodCompletionContributor extends CompletionContributor {
                     if (entityClass == null) return;
                     
                     List<PsiField> fields = Arrays.asList(entityClass.getAllFields());
-                    String prefix = result.getPrefixMatcher().getPrefix();
+                    String prefix = resolvePrefix(parameters, result);
                     
                     if (prefix.startsWith("findBy") || prefix.startsWith("countBy") || 
                         prefix.startsWith("deleteBy") || prefix.startsWith("existsBy")) {
@@ -41,20 +46,86 @@ public class MapperMethodCompletionContributor extends CompletionContributor {
     }
     
     private PsiClass getMapperClass(PsiElement element) {
-        PsiMethod method = com.intellij.psi.util.PsiTreeUtil.getParentOfType(element, PsiMethod.class);
+        PsiMethod method = PsiTreeUtil.getParentOfType(element, PsiMethod.class);
         if (method != null) return method.getContainingClass();
-        return com.intellij.psi.util.PsiTreeUtil.getParentOfType(element, PsiClass.class);
+        return PsiTreeUtil.getParentOfType(element, PsiClass.class);
+    }
+
+    private String resolvePrefix(CompletionParameters parameters, CompletionResultSet result) {
+        String prefix = result.getPrefixMatcher().getPrefix();
+        if (prefix != null && !prefix.isBlank()) {
+            return prefix;
+        }
+
+        PsiElement position = parameters.getPosition();
+        PsiElement parent = position.getParent();
+        if (parent instanceof PsiIdentifier identifier) {
+            return identifier.getText();
+        }
+        if (position instanceof PsiIdentifier identifier) {
+            return identifier.getText();
+        }
+        return "";
     }
     
     private PsiClass findEntityClass(PsiClass mapperClass) {
-        // 简化实现：假设 Mapper 接口名为 XxxMapper，实体类为 Xxx
+        PsiClass fromGeneric = findEntityFromSuperTypes(mapperClass);
+        if (fromGeneric != null) {
+            return fromGeneric;
+        }
+
         String mapperName = mapperClass.getName();
         if (mapperName != null && mapperName.endsWith("Mapper")) {
             String entityName = mapperName.substring(0, mapperName.length() - 6);
-            return JavaPsiFacade.getInstance(mapperClass.getProject())
-                .findClass(entityName, mapperClass.getResolveScope());
+            return findClassByShortName(mapperClass, entityName);
         }
         return null;
+    }
+
+    private PsiClass findEntityFromSuperTypes(PsiClass mapperClass) {
+        for (PsiClassType type : mapperClass.getSuperTypes()) {
+            PsiType[] parameters = type.getParameters();
+            if (parameters.length == 0) {
+                continue;
+            }
+            for (PsiType parameter : parameters) {
+                if (parameter instanceof PsiClassType classType) {
+                    PsiClass resolved = classType.resolve();
+                    if (resolved != null) {
+                        return resolved;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private PsiClass findClassByShortName(PsiClass mapperClass, String shortName) {
+        GlobalSearchScope scope = GlobalSearchScope.projectScope(mapperClass.getProject());
+        PsiClass[] candidates = PsiShortNamesCache.getInstance(mapperClass.getProject())
+                .getClassesByName(shortName, scope);
+        if (candidates.length == 0) {
+            return null;
+        }
+        if (candidates.length == 1) {
+            return candidates[0];
+        }
+        String mapperPackage = packageNameOf(mapperClass);
+        for (PsiClass candidate : candidates) {
+            String candidatePackage = packageNameOf(candidate);
+            if (!mapperPackage.isBlank() && candidatePackage.startsWith(mapperPackage)) {
+                return candidate;
+            }
+        }
+        return candidates[0];
+    }
+
+    private String packageNameOf(PsiClass psiClass) {
+        PsiFile file = psiClass.getContainingFile();
+        if (!(file instanceof PsiJavaFile javaFile)) {
+            return "";
+        }
+        return javaFile.getPackageName();
     }
     
     private void generateCompletions(CompletionResultSet result, List<PsiField> fields, 

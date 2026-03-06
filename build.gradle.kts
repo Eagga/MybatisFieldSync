@@ -1,6 +1,6 @@
 plugins {
     id("java")
-    id("org.jetbrains.intellij") version "1.17.4"
+    id("org.jetbrains.intellij.platform") version "2.11.0"
 }
 
 group = "com.eagga"
@@ -8,10 +8,17 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    intellijPlatform {
+        intellijIdeaCommunity("2023.3")
+        bundledPlugin("com.intellij.java")
+    }
 }
 
 java {
@@ -20,10 +27,13 @@ java {
     }
 }
 
-intellij {
-    version.set("2023.3")
-    type.set("IC")
-    plugins.set(listOf("com.intellij.java"))
+intellijPlatform {
+    pluginConfiguration {
+        ideaVersion {
+            sinceBuild = "233"
+            untilBuild = null
+        }
+    }
 }
 
 tasks {
@@ -34,11 +44,6 @@ tasks {
     
     withType<Test> {
         useJUnitPlatform()
-    }
-
-    patchPluginXml {
-        sinceBuild.set("233")
-        untilBuild.set("")
     }
 
     runIde {

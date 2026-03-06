@@ -16,9 +16,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiIdentifier;
 import com.intellij.psi.PsiJavaFile;
-import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.xml.XmlFile;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +37,7 @@ public class GenerateCrudAction extends AnAction implements DumbAware {
 
         boolean visible = project != null
                 && psiFile instanceof PsiJavaFile
-                && isAllowedPosition(e.getData(CommonDataKeys.PSI_ELEMENT));
+                && resolveTargetClass(e) != null;
 
         presentation.setEnabledAndVisible(visible);
     }
@@ -82,19 +80,6 @@ public class GenerateCrudAction extends AnAction implements DumbAware {
         } catch (Exception ex) {
             NotificationUtil.error(project, "Failed to generate CRUD: " + ex.getMessage());
         }
-    }
-
-    private boolean isAllowedPosition(PsiElement element) {
-        if (element == null || element instanceof PsiWhiteSpace) {
-            return true;
-        }
-        if (element instanceof PsiClass) {
-            return true;
-        }
-        if (element instanceof PsiIdentifier identifier && identifier.getParent() instanceof PsiClass psiClass) {
-            return identifier.equals(psiClass.getNameIdentifier());
-        }
-        return false;
     }
 
     private PsiClass resolveTargetClass(AnActionEvent e) {
