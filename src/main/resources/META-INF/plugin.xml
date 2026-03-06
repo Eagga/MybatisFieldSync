@@ -23,6 +23,7 @@
         <completion.contributor language="JAVA" implementationClass="com.eagga.mybatisfieldsync.completion.MapperMethodCompletionContributor"/>
         <toolWindow id="MyBatis SQL Preview"
                     anchor="right"
+                    icon="/META-INF/pluginIcon.svg"
                     factoryClass="com.eagga.mybatisfieldsync.toolwindow.SqlLogPreviewToolWindowFactory"/>
     </extensions>
     <actions>
