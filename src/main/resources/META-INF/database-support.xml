@@ -1,0 +1,6 @@
+<idea-plugin>
+    <!-- Database plugin integration -->
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="com.eagga.mybatisfieldsync.database.DatabaseConnectionService"/>
+    </extensions>
+</idea-plugin>

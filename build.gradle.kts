@@ -26,8 +26,8 @@ java {
 
 intellij {
     version.set("2023.3")
-    type.set("IC")
-    plugins.set(listOf("com.intellij.java"))
+    type.set("IU")
+    plugins.set(listOf("com.intellij.java", "com.intellij.database"))
 }
 
 tasks {

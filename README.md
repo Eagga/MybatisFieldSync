@@ -32,6 +32,12 @@
   - 支持操作符：`GreaterThan`、`LessThan`、`GreaterThanEqual`、`LessThanEqual`、`Like`、`NotLike`、`In`、`NotIn`、`Between`、`IsNull`、`IsNotNull`
   - 支持多字段组合：`findByNameAndAge`、`findByNameOrEmail`
   - 自动生成 `@Param` 注解和对应的 XML select/delete 语句（`Between` 生成 `xxxStart/xxxEnd`，`In/NotIn` 生成 `Collection<T>` 参数）
+  - 自动过滤带 `@Transient` 或 `@TableField(exist=false)` 注解的字段
+- **数据库连接集成**：自动读取 IDEA Database 工具的数据库连接信息，增强代码补全和类型映射
+  - 根据实体类名自动匹配数据库表（支持驼峰转下划线）
+  - 使用数据库列类型映射更准确的 JdbcType（支持 MySQL、PostgreSQL、Oracle、SQL Server）
+  - 字段同步时优先使用数据库元数据进行类型推断
+  - 需要 IntelliJ IDEA Ultimate 版本（Community 版本不支持 Database 插件）
 - **MyBatis SQL 日志过滤预览（右侧工具窗）**：在 IDEA 右侧打开 `MyBatis SQL Preview`，可开启/关闭过滤，实时预览本地运行日志中的 MyBatis 实际执行 SQL，支持一键清空
 - **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap），支持动态表名 `${tableName}`
 - **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
@@ -40,7 +46,7 @@
   - `Ctrl+Alt+G`：生成 CRUD 模板
   - `Ctrl+Alt+H`：查看同步历史
 - **智能导航**：Mapper 接口方法与 XML Statement 双向跳转（Gutter Icon）
-- **SQL 语法检测**：MyBatis XML 中的 SQL 语句实时语法检查，错误标红提示
+- **SQL 语法检测**：MyBatis XML 中的 SQL 语句实时语法检查，错误标红提示（需启用 IDEA 的 Database Tools and SQL 插件）
 - **参数智能处理**：自动将 `#{...}` 和 `${...}` 转换为 SQL 占位符进行语法分析
 - **同步预览**：先预览目标文本、确认后再执行，防止误修改
 - **字段过滤**：自动忽略带 `@TableField(exist=false)` 或 `@Transient` 注解的字段
@@ -66,6 +72,7 @@
 - IntelliJ IDEA：2023.3 及以上（包含 2024.x、2025.x）
 - 插件声明：`since-build=233`，`until-build` 未限制
 - Java（插件项目构建）：17
+- 数据库集成功能：需要 IntelliJ IDEA Ultimate 版本（Community 版本不支持 Database 插件，但其他功能正常使用）
 
 ## 工程结构
 
@@ -76,34 +83,63 @@ mybatis-field-sync
 ├── gradle.properties
 ├── src/main/java/com/eagga/mybatisfieldsync
 │   ├── action
-│   │   └── SyncFieldsAction.java
+│   │   ├── SyncFieldsAction.java
+│   │   ├── GenerateCrudAction.java
+│   │   └── ViewSyncHistoryAction.java
+│   ├── completion
+│   │   ├── MapperMethodCompletionContributor.java
+│   │   ├── MapperMethodInsertHandler.java
+│   │   ├── MethodNameParser.java
+│   │   ├── SqlGenerator.java
+│   │   └── XmlStatementGenerator.java
+│   ├── database
+│   │   ├── DatabaseConnectionService.java
+│   │   ├── DatabaseTypeMapper.java
+│   │   └── DatabaseFieldEnhancer.java
 │   ├── i18n
 │   │   └── MyBatisFieldSyncBundle.java
+│   ├── injector
+│   │   └── MyBatisSqlLanguageInjector.java
+│   ├── marker
+│   │   ├── MapperLineMarkerProvider.java
+│   │   └── XmlLineMarkerProvider.java
 │   ├── model
 │   │   ├── FieldInfo.java
 │   │   ├── StatementInfo.java
 │   │   └── SyncException.java
 │   ├── service
 │   │   ├── FieldSyncService.java
+│   │   ├── CrudTemplateService.java
+│   │   ├── SyncHistoryService.java
 │   │   └── SqlLogPreviewService.java
+│   ├── settings
+│   │   ├── MyBatisFieldSyncSettings.java
+│   │   └── MyBatisFieldSyncConfigurable.java
 │   ├── toolwindow
 │   │   ├── SqlLogPreviewToolWindowFactory.java
 │   │   └── SqlLogPreviewPanel.java
 │   ├── ui
 │   │   ├── FieldSelectionDialog.java
 │   │   ├── FieldSelectionTableModel.java
+│   │   ├── PreviewDialog.java
+│   │   ├── CrudTemplateDialog.java
+│   │   ├── SyncHistoryDialog.java
 │   │   ├── SimpleStatementRenderer.java
 │   │   └── SimpleXmlFileRenderer.java
 │   └── util
 │       ├── IndentUtil.java
 │       ├── JdbcTypeUtil.java
 │       ├── NameUtil.java
+│       ├── FieldIgnoreUtil.java
 │       └── NotificationUtil.java
 ├── src/test/java/com/eagga/mybatisfieldsync/completion
 │   ├── MethodNameParserTest.java
 │   └── SqlGeneratorTest.java
 └── src/main/resources
-    ├── META-INF/plugin.xml
+    ├── META-INF
+    │   ├── plugin.xml
+    │   ├── database-support.xml
+    │   └── pluginIcon.svg
     └── messages
         ├── MyBatisFieldSyncBundle.properties
         └── MyBatisFieldSyncBundle_zh_CN.properties
@@ -143,6 +179,13 @@ mybatis-field-sync
 ## 使用说明
 
 ### 基础使用
+
+#### 数据库连接配置（可选，增强功能）
+1. 打开 IDEA 的 Database 工具窗口（View -> Tool Windows -> Database）
+2. 添加数据源连接（支持 MySQL、PostgreSQL、Oracle、SQL Server 等）
+3. 测试连接成功后，插件会自动读取表结构信息
+4. 字段同步时会使用数据库列类型进行更准确的 JdbcType 映射
+5. 注意：此功能需要 IntelliJ IDEA Ultimate 版本
 
 #### 字段同步
 1. 打开 Java 实体类文件
@@ -237,7 +280,7 @@ public class User {
 
 #### 场景 3：ResultMap 字段映射同步
 ```xml
-<!-- 自动生成完整的字段映射 -->
+<!-- 自动生成完整的字段映射，JdbcType 根据数据库列类型自动推断 -->
 <resultMap id="BaseResultMap" type="User">
     <result column="id" property="id" jdbcType="BIGINT"/>
     <result column="name" property="name" jdbcType="VARCHAR"/>
@@ -246,7 +289,34 @@ public class User {
 </resultMap>
 ```
 
-#### 场景 4：一键生成 CRUD 模板（支持动态表名）
+#### 场景 4：数据库集成增强类型映射
+```java
+// 实体类
+public class User {
+    private Long id;
+    private String name;
+    private LocalDateTime createTime;  // Java 类型
+}
+```
+
+配置 Database 连接后，插件会读取数据库表结构：
+```sql
+CREATE TABLE user (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(100),
+    create_time DATETIME  -- 数据库类型
+);
+```
+
+同步时自动使用数据库类型映射：
+```xml
+<insert id="insert">
+    INSERT INTO user (id, name, create_time)
+    VALUES (#{id,jdbcType=BIGINT}, #{name,jdbcType=VARCHAR}, #{createTime,jdbcType=TIMESTAMP})
+</insert>
+```
+
+#### 场景 5：一键生成 CRUD 模板（支持动态表名）
 ```java
 // 实体类
 public class User {
@@ -435,6 +505,7 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持 Mapper 和 XML 的互相跳转
 - [x] 支持 SQL 代码提示与错误标红提示
 - [x] 支持 mybatis sql 日志过滤预览功能
+- [x] 集成 IDEA Database 工具增强类型映射和补全
 - [ ] 支持从 XML 反向生成实体类字段
 - [ ] 支持字段注释同步到 XML 注释
 

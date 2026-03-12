@@ -9,6 +9,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
+    <depends optional="true" config-file="database-support.xml">com.intellij.database</depends>
 
     <resource-bundle>messages.MyBatisFieldSyncBundle</resource-bundle>
 

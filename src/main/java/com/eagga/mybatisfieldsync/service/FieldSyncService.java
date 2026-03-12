@@ -1,5 +1,6 @@
 package com.eagga.mybatisfieldsync.service;
 
+import com.eagga.mybatisfieldsync.database.DatabaseFieldEnhancer;
 import com.eagga.mybatisfieldsync.i18n.MyBatisFieldSyncBundle;
 import com.eagga.mybatisfieldsync.model.FieldInfo;
 import com.eagga.mybatisfieldsync.model.StatementInfo;
@@ -93,7 +94,17 @@ public final class FieldSyncService {
             }
         }
 
-        return new ArrayList<>(result.values());
+        List<FieldInfo> fields = new ArrayList<>(result.values());
+
+        // 尝试使用数据库信息增强字段类型映射
+        try {
+            DatabaseFieldEnhancer enhancer = new DatabaseFieldEnhancer(project);
+            fields = enhancer.enhanceFields(psiClass, fields);
+        } catch (Throwable ignored) {
+            // 数据库插件不可用时忽略
+        }
+
+        return fields;
     }
 
     /**
