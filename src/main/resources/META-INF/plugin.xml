@@ -45,6 +45,13 @@
                 <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt G"/>
             </action>
 
+            <action id="com.eagga.mybatisfieldsync.action.GenerateMapperMethodsAction"
+                    class="com.eagga.mybatisfieldsync.action.GenerateMapperMethodsAction"
+                    text="Generate Mapper Methods"
+                    description="Generate methods in Mapper interface">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt M"/>
+            </action>
+
             <separator/>
 
             <action id="com.eagga.mybatisfieldsync.action.ViewSyncHistoryAction"

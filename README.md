@@ -40,10 +40,12 @@
   - 需要 IntelliJ IDEA Ultimate 版本（Community 版本不支持 Database 插件）
 - **MyBatis SQL 日志过滤预览（右侧工具窗）**：在 IDEA 右侧打开 `MyBatis SQL Preview`，可开启/关闭过滤，实时预览本地运行日志中的 MyBatis 实际执行 SQL，支持一键清空
 - **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap），支持动态表名 `${tableName}`
+- **Mapper 接口方法生成**：`MyBatis Field Sync` -> `Generate Mapper Methods`，自动在 Mapper 接口中生成标准方法（insert、update、delete、selectById、selectList），自动查找对应的 Mapper 接口（支持 EntityMapper 和 EntityDao 命名规范）
 - **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
 - **快捷键支持**：
   - `Ctrl+Alt+S`：字段同步
   - `Ctrl+Alt+G`：生成 CRUD 模板
+  - `Ctrl+Alt+M`：生成 Mapper 方法
   - `Ctrl+Alt+H`：查看同步历史
 - **智能导航**：Mapper 接口方法与 XML Statement 双向跳转（Gutter Icon）
 - **SQL 语法检测**：MyBatis XML 中的 SQL 语句实时语法检查，错误标红提示（需启用 IDEA 的 Database Tools and SQL 插件）
@@ -523,8 +525,8 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持动态表名场景
 - [x] 添加快捷键支持
 - [x] 提供同步历史记录功能
+- [x] 支持生成 Mapper 接口方法
 - [ ] 支持多模块项目的 XML 自动查找
 - [ ] 支持 XML 格式化配置
 - [ ] 支持批量同步多个实体类
-- [ ] 支持生成 Mapper 接口方法
 - [ ] 支持 TypeHandler 自定义类型映射
