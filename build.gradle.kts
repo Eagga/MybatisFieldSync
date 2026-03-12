@@ -1,6 +1,10 @@
 plugins {
     id("java")
-    id("org.jetbrains.intellij.platform") version "2.11.0"
+    id("org.jetbrains.intellij") version "1.17.4"
+}
+
+if (JavaVersion.current() < JavaVersion.VERSION_11) {
+    throw GradleException("Gradle JVM must be 11+ (recommended 17). Please set IDEA Gradle JVM to JDK 17.")
 }
 
 group = "com.eagga"
@@ -8,17 +12,10 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
-    intellijPlatform {
-        defaultRepositories()
-    }
 }
 
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    intellijPlatform {
-        intellijIdeaCommunity("2023.3")
-        bundledPlugin("com.intellij.java")
-    }
 }
 
 java {
@@ -27,13 +24,10 @@ java {
     }
 }
 
-intellijPlatform {
-    pluginConfiguration {
-        ideaVersion {
-            sinceBuild = "233"
-            untilBuild = null
-        }
-    }
+intellij {
+    version.set("2023.3")
+    type.set("IC")
+    plugins.set(listOf("com.intellij.java"))
 }
 
 tasks {
@@ -44,6 +38,11 @@ tasks {
     
     withType<Test> {
         useJUnitPlatform()
+    }
+
+    patchPluginXml {
+        sinceBuild.set("233")
+        untilBuild.set("")
     }
 
     runIde {

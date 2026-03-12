@@ -33,8 +33,10 @@ public class MapperMethodCompletionContributor extends CompletionContributor imp
                     
                     PsiClass entityClass = findEntityClass(mapperClass);
                     if (entityClass == null) return;
-                    
-                    List<PsiField> fields = Arrays.asList(entityClass.getAllFields());
+
+                    List<PsiField> fields = Arrays.stream(entityClass.getAllFields())
+                            .filter(f -> !FieldIgnoreUtil.shouldIgnore(f))
+                            .toList();
                     String prefix = resolvePrefix(parameters, result);
                     
                     if (prefix.startsWith("findBy") || prefix.startsWith("countBy") || 
