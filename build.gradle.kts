@@ -8,7 +8,9 @@ if (JavaVersion.current() < JavaVersion.VERSION_11) {
 }
 
 group = "com.eagga"
-version = "1.0.0"
+version = System.getenv("PLUGIN_VERSION")
+    ?: (findProperty("pluginVersion") as String?)
+    ?: "1.0.0"
 
 repositories {
     mavenCentral()
@@ -47,5 +49,36 @@ tasks {
 
     runIde {
         jvmArgs = listOf("-Dfile.encoding=UTF-8")
+    }
+
+    signPlugin {
+        certificateChain.set(
+            providers.environmentVariable("CERTIFICATE_CHAIN")
+                .orElse(providers.gradleProperty("certificateChain"))
+        )
+        privateKey.set(
+            providers.environmentVariable("PRIVATE_KEY")
+                .orElse(providers.gradleProperty("privateKey"))
+        )
+        password.set(
+            providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+                .orElse(providers.gradleProperty("privateKeyPassword"))
+        )
+    }
+
+    publishPlugin {
+        dependsOn(signPlugin)
+        token.set(
+            providers.environmentVariable("PUBLISH_TOKEN")
+                .orElse(providers.gradleProperty("intellijPublishToken"))
+        )
+        channels.set(
+            listOf(
+                providers.environmentVariable("PUBLISH_CHANNEL")
+                    .orElse(providers.gradleProperty("publishChannel"))
+                    .orElse("default")
+                    .get()
+            )
+        )
     }
 }

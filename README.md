@@ -182,6 +182,41 @@ mybatis-field-sync
 3. 安装后重启 IDE
 4. 若你之前装过旧版本，建议先卸载旧版本再安装新包，避免缓存旧类
 
+## 自动发布到插件市场（GitHub Actions）
+
+仓库已提供手动触发的发布工作流：`.github/workflows/publish-plugin.yml`。
+
+### 1. 配置 GitHub Secrets
+
+在仓库 `Settings -> Secrets and variables -> Actions` 中添加：
+
+- `PUBLISH_TOKEN`：JetBrains Marketplace 发布 Token
+- `CERTIFICATE_CHAIN`：插件签名证书链（PEM）
+- `PRIVATE_KEY`：签名私钥（PEM）
+- `PRIVATE_KEY_PASSWORD`：私钥密码
+
+### 2. 手动触发发布
+
+1. 打开 GitHub 仓库 `Actions` 页面
+2. 选择工作流 `Publish Plugin`
+3. 点击 `Run workflow`
+4. 输入：
+   - `version`：发布版本号（如 `1.0.1`）
+   - `channel`：发布通道（默认 `default`，预发布可用 `eap`）
+5. 确认后工作流会自动执行 `clean -> verifyPlugin -> signPlugin -> publishPlugin`
+
+### 3. 本地可选验证命令
+
+```bash
+./gradlew verifyPlugin
+```
+
+```bash
+PLUGIN_VERSION=1.0.1 PUBLISH_CHANNEL=default ./gradlew signPlugin publishPlugin
+```
+
+> 注意：第二条命令需要你在环境变量或 `~/.gradle/gradle.properties` 中提供发布与签名凭据。
+
 ## 使用说明
 
 ### 基础使用
