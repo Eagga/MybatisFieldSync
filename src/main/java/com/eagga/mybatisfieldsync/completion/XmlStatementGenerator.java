@@ -7,6 +7,7 @@ import com.intellij.psi.xml.XmlFile;
 import com.intellij.psi.xml.XmlTag;
 import com.eagga.mybatisfieldsync.service.FieldSyncService;
 import com.eagga.mybatisfieldsync.util.NotificationUtil;
+import com.eagga.mybatisfieldsync.util.MyBatisPlusUtil;
 import java.util.List;
 
 public class XmlStatementGenerator {
@@ -81,6 +82,6 @@ public class XmlStatementGenerator {
     }
     
     private static String getTableName(PsiClass entityClass) {
-        return com.eagga.mybatisfieldsync.util.NameUtil.camelToSnake(entityClass.getName());
+        return MyBatisPlusUtil.resolveTableName(entityClass);
     }
 }

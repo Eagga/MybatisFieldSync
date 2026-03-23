@@ -172,6 +172,15 @@ public final class FieldSyncService {
             @NotNull List<FieldInfo> selectedFields,
             @NotNull List<FieldInfo> allFieldsInOrder,
             @NotNull String entityClassName) throws SyncException {
+        syncInWriteCommand(xmlFile, statementInfo, selectedFields, allFieldsInOrder, entityClassName, true);
+    }
+
+    public void syncInWriteCommand(@NotNull XmlFile xmlFile,
+            @NotNull StatementInfo statementInfo,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder,
+            @NotNull String entityClassName,
+            boolean recordHistory) throws SyncException {
         AtomicReference<SyncException> exceptionRef = new AtomicReference<>();
         WriteCommandAction.runWriteCommandAction(project,
                 MyBatisFieldSyncBundle.message("action.syncFields.text"),
@@ -189,9 +198,11 @@ public final class FieldSyncService {
             throw exceptionRef.get();
         }
 
-        SyncHistoryService historyService = project.getService(SyncHistoryService.class);
-        historyService.addEntry(entityClassName, xmlFile.getName(), statementInfo.id(),
-                selectedFields.stream().map(FieldInfo::name).toList());
+        if (recordHistory) {
+            SyncHistoryService historyService = project.getService(SyncHistoryService.class);
+            historyService.addEntry(entityClassName, xmlFile.getName(), statementInfo.id(),
+                    selectedFields.stream().map(FieldInfo::name).toList());
+        }
     }
 
     private void syncStatement(@NotNull StatementInfo statementInfo,

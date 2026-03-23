@@ -1,6 +1,7 @@
 package com.eagga.mybatisfieldsync.database;
 
 import com.eagga.mybatisfieldsync.model.FieldInfo;
+import com.eagga.mybatisfieldsync.util.MyBatisPlusUtil;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiField;
@@ -35,12 +36,8 @@ public final class DatabaseFieldEnhancer {
             return fields;
         }
 
-        String entityName = entityClass.getName();
-        if (entityName == null) {
-            return fields;
-        }
-
-        DatabaseConnectionService.TableInfo tableInfo = dbService.findTableByEntityName(entityName);
+        String tableName = MyBatisPlusUtil.resolveTableName(entityClass);
+        DatabaseConnectionService.TableInfo tableInfo = findBestTable(tableName);
         if (tableInfo == null) {
             return fields;
         }
@@ -80,12 +77,8 @@ public final class DatabaseFieldEnhancer {
             return List.of();
         }
 
-        String entityName = entityClass.getName();
-        if (entityName == null) {
-            return List.of();
-        }
-
-        DatabaseConnectionService.TableInfo tableInfo = dbService.findTableByEntityName(entityName);
+        String tableName = MyBatisPlusUtil.resolveTableName(entityClass);
+        DatabaseConnectionService.TableInfo tableInfo = findBestTable(tableName);
         if (tableInfo == null) {
             return List.of();
         }
@@ -148,6 +141,16 @@ public final class DatabaseFieldEnhancer {
             map.put(column.columnName().toLowerCase(), column);
         }
         return map;
+    }
+
+    private @Nullable DatabaseConnectionService.TableInfo findBestTable(@NotNull String tableName) {
+        List<DatabaseConnectionService.TableInfo> tables = dbService.findTablesByName(tableName);
+        for (DatabaseConnectionService.TableInfo table : tables) {
+            if (table.tableName().equalsIgnoreCase(tableName)) {
+                return table;
+            }
+        }
+        return tables.isEmpty() ? null : tables.get(0);
     }
 
     private boolean isTypeCompatible(@NotNull String expectedType, @NotNull String actualType) {

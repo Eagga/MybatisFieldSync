@@ -103,7 +103,8 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
                     XmlTag mockTag = findEquivalentTag(copyFile, stmt.tag());
                     if (mockTag != null) {
                         StatementInfo mockStmt = new StatementInfo(stmt.id(), stmt.tagName(), mockTag);
-                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder, targetClass.getName());
+                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder,
+                                targetClass.getName(), false);
                     }
                 } catch (Exception ex) {
                     preFailed.add(stmt.id() + ": " + ex.getMessage());

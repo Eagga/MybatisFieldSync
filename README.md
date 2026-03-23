@@ -39,8 +39,8 @@
   - 字段同步时优先使用数据库元数据进行类型推断
   - 需要 IntelliJ IDEA Ultimate 版本（Community 版本不支持 Database 插件）
 - **MyBatis SQL 日志过滤预览（右侧工具窗）**：在 IDEA 右侧打开 `MyBatis SQL Preview`，可开启/关闭过滤，实时预览本地运行日志中的 MyBatis 实际执行 SQL，支持一键清空
-- **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap），支持动态表名 `${tableName}`
-- **Mapper 接口方法生成**：`MyBatis Field Sync` -> `Generate Mapper Methods`，自动在 Mapper 接口中生成标准方法（insert、update、delete、selectById、selectList），自动查找对应的 Mapper 接口（支持 EntityMapper 和 EntityDao 命名规范）
+- **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap）；模板默认使用动态表名 `${tableName}`，并在主键条件处优先采用 `@TableId`（无注解时回退到 `id` 字段）
+- **Mapper 接口方法生成**：`MyBatis Field Sync` -> `Generate Mapper Methods`，自动在 Mapper 接口中生成标准方法（insert、update、delete、selectById、selectList），自动查找对应的 Mapper 接口（支持 EntityMapper 和 EntityDao 命名规范）；`delete/selectById` 参数会优先采用 `@TableId` 的字段名与类型
 - **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
 - **快捷键支持**：
   - `Ctrl+Alt+S`：字段同步
@@ -50,8 +50,12 @@
 - **智能导航**：Mapper 接口方法与 XML Statement 双向跳转（Gutter Icon）
 - **SQL 语法检测**：MyBatis XML 中的 SQL 语句实时语法检查，错误标红提示（需启用 IDEA 的 Database Tools and SQL 插件）
 - **参数智能处理**：自动将 `#{...}` 和 `${...}` 转换为 SQL 占位符进行语法分析
-- **同步预览**：先预览目标文本、确认后再执行，防止误修改
+- **同步预览**：先预览目标文本、确认后再执行，防止误修改；仅预览/取消不会写入同步历史
 - **字段过滤**：自动忽略带 `@TableField(exist=false)` 或 `@Transient` 注解的字段
+- **MyBatis-Plus 注解支持（已实现范围）**：
+  - `@TableName`：用于 SQL 生成与数据库表匹配时的表名解析（未标注时回退类名驼峰转下划线）
+  - `@TableId`：用于 CRUD 条件与 Mapper 方法参数的主键解析
+  - `@TableField(exist=false)`：用于字段过滤（不参与同步/补全）
 - **自定义映射**：在 IDEA 设置（Settings -> Tools -> MyBatis Field Sync）中配置 `javaType=jdbcType` 映射
 
 ### 开发体验
@@ -488,9 +492,9 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - XML 格式化配置（缩进、换行风格）
 
 ### 框架集成
-- MyBatis-Plus 注解支持（`@TableName`、`@TableId`、`@TableField`）
+- 增强 MyBatis-Plus 注解支持（如更多注解属性和场景）
 - TypeHandler 自定义类型映射
-- 支持 `<choose>/<when>/<otherwise>` 复杂动态标签
+- 增强 `<choose>/<when>/<otherwise>` 更复杂嵌套动态标签场景
 
 ### 用户体验
 - 添加快捷键支持
@@ -517,7 +521,7 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持自定义 JdbcType 映射配置
 - [x] 提供同步预览功能（先预览再执行）
 - [x] 支持 `<choose>/<when>/<otherwise>` 动态标签
-- [x] 支持 MyBatis-Plus 注解（`@TableName`、`@TableId`、`@TableField`）
+- [x] 支持 MyBatis-Plus 注解（`@TableName` 表名解析、`@TableId` 主键解析、`@TableField(exist=false)` 字段过滤）
 - [x] 支持生成常用 CRUD 模板
 - [ ] 支持字段重命名时自动更新 XML
 

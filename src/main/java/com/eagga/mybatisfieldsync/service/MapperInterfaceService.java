@@ -1,6 +1,7 @@
 package com.eagga.mybatisfieldsync.service;
 
 import com.eagga.mybatisfieldsync.model.FieldInfo;
+import com.eagga.mybatisfieldsync.util.MyBatisPlusUtil;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
@@ -33,6 +34,7 @@ public final class MapperInterfaceService {
                                       @NotNull Set<String> methodTypes) {
         WriteCommandAction.runWriteCommandAction(project, "Generate Mapper Methods", null, () -> {
             PsiElementFactory factory = JavaPsiFacade.getElementFactory(project);
+            MyBatisPlusUtil.PrimaryKey primaryKey = MyBatisPlusUtil.resolvePrimaryKey(fields);
 
             if (methodTypes.contains("insert")) {
                 addMethodIfNotExists(mapperInterface, factory, generateInsertMethod(factory, entityClass));
@@ -41,10 +43,10 @@ public final class MapperInterfaceService {
                 addMethodIfNotExists(mapperInterface, factory, generateUpdateMethod(factory, entityClass));
             }
             if (methodTypes.contains("delete")) {
-                addMethodIfNotExists(mapperInterface, factory, generateDeleteMethod(factory, entityClass));
+                addMethodIfNotExists(mapperInterface, factory, generateDeleteMethod(factory, primaryKey));
             }
             if (methodTypes.contains("selectById")) {
-                addMethodIfNotExists(mapperInterface, factory, generateSelectByIdMethod(factory, entityClass));
+                addMethodIfNotExists(mapperInterface, factory, generateSelectByIdMethod(factory, entityClass, primaryKey));
             }
             if (methodTypes.contains("selectList")) {
                 addMethodIfNotExists(mapperInterface, factory, generateSelectListMethod(factory, entityClass));
@@ -80,15 +82,16 @@ public final class MapperInterfaceService {
     }
 
     private @NotNull PsiMethod generateDeleteMethod(@NotNull PsiElementFactory factory,
-                                                     @NotNull PsiClass entityClass) {
-        String methodText = "int delete(Long id);";
+                                                     @NotNull MyBatisPlusUtil.PrimaryKey primaryKey) {
+        String methodText = "int delete(" + primaryKey.javaType() + " " + primaryKey.propertyName() + ");";
         return factory.createMethodFromText(methodText, null);
     }
 
     private @NotNull PsiMethod generateSelectByIdMethod(@NotNull PsiElementFactory factory,
-                                                         @NotNull PsiClass entityClass) {
+                                                         @NotNull PsiClass entityClass,
+                                                         @NotNull MyBatisPlusUtil.PrimaryKey primaryKey) {
         String entityName = entityClass.getName();
-        String methodText = entityName + " selectById(Long id);";
+        String methodText = entityName + " selectById(" + primaryKey.javaType() + " " + primaryKey.propertyName() + ");";
         return factory.createMethodFromText(methodText, null);
     }
 

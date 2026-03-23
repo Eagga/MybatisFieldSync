@@ -2,6 +2,7 @@ package com.eagga.mybatisfieldsync.service;
 
 import com.eagga.mybatisfieldsync.model.FieldInfo;
 import com.eagga.mybatisfieldsync.util.IndentUtil;
+import com.eagga.mybatisfieldsync.util.MyBatisPlusUtil;
 import com.eagga.mybatisfieldsync.util.NameUtil;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.components.Service;
@@ -33,7 +34,8 @@ public final class CrudTemplateService {
             }
 
             String indent = IndentUtil.detectIndentUnit(rootTag.getText());
-            String tableName = NameUtil.camelToSnake(entityClass.getName());
+            String tableName = MyBatisPlusUtil.resolveTableName(entityClass);
+            MyBatisPlusUtil.PrimaryKey primaryKey = MyBatisPlusUtil.resolvePrimaryKey(fields);
 
             if (templates.contains("resultMap")) {
                 generateResultMap(rootTag, entityClass, fields, indent);
@@ -42,13 +44,13 @@ public final class CrudTemplateService {
                 generateInsert(rootTag, tableName, fields, indent);
             }
             if (templates.contains("update")) {
-                generateUpdate(rootTag, tableName, fields, indent);
+                generateUpdate(rootTag, tableName, fields, primaryKey, indent);
             }
             if (templates.contains("delete")) {
-                generateDelete(rootTag, tableName, indent);
+                generateDelete(rootTag, tableName, primaryKey, indent);
             }
             if (templates.contains("select")) {
-                generateSelect(rootTag, tableName, fields, indent);
+                generateSelect(rootTag, tableName, fields, primaryKey, indent);
             }
         }, xmlFile);
     }
@@ -92,7 +94,7 @@ public final class CrudTemplateService {
     }
 
     private void generateUpdate(@NotNull XmlTag rootTag, @NotNull String tableName,
-            @NotNull List<FieldInfo> fields, @NotNull String indent) {
+            @NotNull List<FieldInfo> fields, @NotNull MyBatisPlusUtil.PrimaryKey primaryKey, @NotNull String indent) {
         StringBuilder sb = new StringBuilder("\n");
         sb.append(indent).append("<update id=\"update\">\n");
         sb.append(indent).append(indent).append("UPDATE ${tableName}\n");
@@ -105,21 +107,26 @@ public final class CrudTemplateService {
                     .append("},</if>\n");
         }
         sb.append(indent).append(indent).append("</set>\n");
-        sb.append(indent).append(indent).append("WHERE id = #{id}\n");
+        sb.append(indent).append(indent)
+                .append("WHERE ").append(primaryKey.columnName())
+                .append(" = #{").append(primaryKey.propertyName())
+                .append(",jdbcType=").append(primaryKey.jdbcType()).append("}\n");
         sb.append(indent).append("</update>\n");
         rootTag.getValue().setText(rootTag.getValue().getText() + sb);
     }
 
-    private void generateDelete(@NotNull XmlTag rootTag, @NotNull String tableName, @NotNull String indent) {
+    private void generateDelete(@NotNull XmlTag rootTag, @NotNull String tableName,
+            @NotNull MyBatisPlusUtil.PrimaryKey primaryKey, @NotNull String indent) {
         String sql = "\n" + indent + "<delete id=\"delete\">\n" +
                 indent + indent + "DELETE FROM ${tableName}\n" +
-                indent + indent + "WHERE id = #{id}\n" +
+                indent + indent + "WHERE " + primaryKey.columnName()
+                + " = #{" + primaryKey.propertyName() + ",jdbcType=" + primaryKey.jdbcType() + "}\n" +
                 indent + "</delete>\n";
         rootTag.getValue().setText(rootTag.getValue().getText() + sql);
     }
 
     private void generateSelect(@NotNull XmlTag rootTag, @NotNull String tableName,
-            @NotNull List<FieldInfo> fields, @NotNull String indent) {
+            @NotNull List<FieldInfo> fields, @NotNull MyBatisPlusUtil.PrimaryKey primaryKey, @NotNull String indent) {
         StringBuilder columns = new StringBuilder();
         for (int i = 0; i < fields.size(); i++) {
             if (i > 0) {
@@ -131,7 +138,8 @@ public final class CrudTemplateService {
         String sql = "\n" + indent + "<select id=\"selectById\" resultMap=\"BaseResultMap\">\n" +
                 indent + indent + "SELECT " + columns + "\n" +
                 indent + indent + "FROM ${tableName}\n" +
-                indent + indent + "WHERE id = #{id}\n" +
+                indent + indent + "WHERE " + primaryKey.columnName()
+                + " = #{" + primaryKey.propertyName() + ",jdbcType=" + primaryKey.jdbcType() + "}\n" +
                 indent + "</select>\n";
         rootTag.getValue().setText(rootTag.getValue().getText() + sql);
     }
