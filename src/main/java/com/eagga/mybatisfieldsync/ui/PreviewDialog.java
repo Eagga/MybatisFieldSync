@@ -11,13 +11,23 @@ import java.awt.Dimension;
 
 public class PreviewDialog extends DialogWrapper {
     private final String previewText;
+    private final String dialogTitle;
+    private final String okText;
+    private final String cancelText;
 
     public PreviewDialog(Project project, String previewText) {
+        this(project, "Preview Synchronization", "Execute", "Cancel", previewText);
+    }
+
+    public PreviewDialog(Project project, String dialogTitle, String okText, String cancelText, String previewText) {
         super(project);
         this.previewText = previewText;
-        setTitle("Preview Synchronization");
-        setOKButtonText("Execute");
-        setCancelButtonText("Cancel");
+        this.dialogTitle = dialogTitle;
+        this.okText = okText;
+        this.cancelText = cancelText;
+        setTitle(dialogTitle);
+        setOKButtonText(okText);
+        setCancelButtonText(cancelText);
         init();
     }
 

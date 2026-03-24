@@ -9,14 +9,15 @@ import com.eagga.mybatisfieldsync.util.IndentUtil;
 import com.eagga.mybatisfieldsync.util.FieldIgnoreUtil;
 import com.eagga.mybatisfieldsync.util.JdbcTypeUtil;
 import com.eagga.mybatisfieldsync.util.NameUtil;
+import com.eagga.mybatisfieldsync.util.XmlFieldSyncSupport;
 import com.intellij.ide.highlighter.XmlFileType;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.components.Service;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.project.Project;
-import com.intellij.psi.PsiClass;
-import com.intellij.psi.PsiField;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiManager;
+import com.intellij.psi.*;
+import com.intellij.psi.codeStyle.CodeStyleManager;
+import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.psi.search.FileTypeIndex;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
@@ -164,6 +165,79 @@ public final class FieldSyncService {
         return result;
     }
 
+    public @NotNull ReverseGenerationResult generateFieldsFromXml(@NotNull PsiClass targetClass,
+            @NotNull List<XmlFieldSyncSupport.XmlFieldDraft> drafts) {
+        List<FieldInfo> existingFields = collectFields(targetClass, true);
+        Set<String> existingNames = new HashSet<>();
+        for (FieldInfo field : existingFields) {
+            existingNames.add(field.name());
+        }
+
+        List<XmlFieldSyncSupport.XmlFieldDraft> newDrafts = new ArrayList<>();
+        List<String> conflicts = new ArrayList<>();
+        for (XmlFieldSyncSupport.XmlFieldDraft draft : drafts) {
+            if (existingNames.contains(draft.fieldName())) {
+                conflicts.add(draft.fieldName());
+                continue;
+            }
+            newDrafts.add(draft);
+            existingNames.add(draft.fieldName());
+        }
+        return new ReverseGenerationResult(newDrafts, conflicts);
+    }
+
+    public void applyGeneratedFields(@NotNull PsiClass targetClass,
+            @NotNull List<XmlFieldSyncSupport.XmlFieldDraft> drafts) {
+        if (drafts.isEmpty()) {
+            return;
+        }
+        WriteCommandAction.runWriteCommandAction(project, "Generate Fields From MyBatis XML", null, () -> {
+            PsiElementFactory factory = JavaPsiFacade.getElementFactory(project);
+            PsiJavaFile javaFile = targetClass.getContainingFile() instanceof PsiJavaFile file ? file : null;
+            PsiElement anchor = targetClass.getRBrace();
+            if (anchor == null) {
+                anchor = targetClass.getLastChild();
+            }
+            for (XmlFieldSyncSupport.XmlFieldDraft draft : drafts) {
+                String fieldText = XmlFieldSyncSupport.toJavaFieldSnippet(draft);
+                PsiField field = factory.createFieldFromText(fieldText, targetClass);
+                targetClass.addBefore(field, anchor);
+                targetClass.addBefore(PsiParserFacade.getInstance(project).createWhiteSpaceFromText("\n\n"), anchor);
+            }
+            CodeStyleManager.getInstance(project).reformat(targetClass);
+            if (javaFile != null) {
+                JavaCodeStyleManager.getInstance(project).optimizeImports(javaFile);
+            }
+        }, targetClass.getContainingFile());
+    }
+
+    public void syncCommentsInWriteCommand(@NotNull XmlFile xmlFile,
+            @NotNull StatementInfo statementInfo,
+            @NotNull List<FieldInfo> selectedFields) {
+        WriteCommandAction.runWriteCommandAction(project,
+                "Sync Field Comments to MyBatis XML",
+                null,
+                () -> syncFieldComments(statementInfo.tag(), selectedFields),
+                xmlFile);
+    }
+
+    public void renameFieldReferences(@NotNull PsiClass entityClass, @NotNull String oldName, @NotNull String newName) {
+        if (Objects.equals(oldName, newName)) {
+            return;
+        }
+        for (XmlFile xmlFile : findCandidateXmlFiles(entityClass)) {
+            Document document = PsiDocumentManager.getInstance(project).getDocument(xmlFile);
+            if (document == null) {
+                continue;
+            }
+            String updated = renameFieldReferencesInText(document.getText(), oldName, newName);
+            if (!updated.equals(document.getText())) {
+                document.setText(updated);
+                PsiDocumentManager.getInstance(project).commitDocument(document);
+            }
+        }
+    }
+
     /**
      * 在写命令中执行单个 Statement 同步，确保支持 IDE 的撤销/重做。
      */
@@ -247,6 +321,116 @@ public final class FieldSyncService {
         }
 
         throw new SyncException(MyBatisFieldSyncBundle.message("notify.unsupported", id));
+    }
+
+    private void syncFieldComments(@NotNull XmlTag statementTag, @NotNull List<FieldInfo> selectedFields) {
+        String tagName = statementTag.getName().toLowerCase(Locale.ROOT);
+        String id = Objects.requireNonNullElse(statementTag.getAttributeValue("id"), "");
+        if ("resultmap".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("result")) {
+            String body = statementTag.getValue().getText();
+            for (FieldInfo field : selectedFields) {
+                String comment = resolveFieldComment(field);
+                if (comment.isBlank()) {
+                    continue;
+                }
+                body = XmlFieldSyncSupport.upsertCommentBeforeLine(body, resultPatternFor(field), comment);
+            }
+            statementTag.getValue().setText(body);
+            return;
+        }
+
+        if ("sql".equals(tagName) && id.toLowerCase(Locale.ROOT).contains("column")) {
+            String body = statementTag.getValue().getText();
+            for (FieldInfo field : selectedFields) {
+                String comment = resolveFieldComment(field);
+                if (comment.isBlank()) {
+                    continue;
+                }
+                body = XmlFieldSyncSupport.upsertCommentBeforeLine(body, columnPatternFor(field), comment);
+            }
+            statementTag.getValue().setText(body);
+            return;
+        }
+
+        syncCommentsRecursively(statementTag, selectedFields);
+    }
+
+    private void syncCommentsRecursively(@NotNull XmlTag tag, @NotNull List<FieldInfo> selectedFields) {
+        if (tag.getSubTags().length == 0) {
+            String body = tag.getValue().getText();
+            String updated = body;
+            for (FieldInfo field : selectedFields) {
+                String comment = resolveFieldComment(field);
+                if (comment.isBlank()) {
+                    continue;
+                }
+                updated = XmlFieldSyncSupport.upsertCommentBeforeLine(updated, assignmentPatternFor(field), comment);
+                updated = XmlFieldSyncSupport.upsertCommentBeforeLine(updated, columnPatternFor(field), comment);
+                updated = XmlFieldSyncSupport.upsertCommentBeforeLine(updated,
+                        Pattern.compile("(?i)(^|\\s)and\\s+`?" + Pattern.quote(NameUtil.camelToSnake(field.name()))
+                                + "`?\\b"),
+                        comment);
+            }
+            if (!updated.equals(body)) {
+                tag.getValue().setText(updated);
+            }
+            return;
+        }
+
+        for (XmlTag subTag : tag.getSubTags()) {
+            syncCommentsRecursively(subTag, selectedFields);
+        }
+    }
+
+    private @NotNull String renameFieldReferencesInText(@NotNull String xmlText, @NotNull String oldName,
+            @NotNull String newName) {
+        String updated = xmlText.replaceAll("property\\s*=\\s*\"" + Pattern.quote(oldName) + "\"",
+                "property=\"" + Matcher.quoteReplacement(newName) + "\"");
+
+        Matcher matcher = Pattern.compile("test\\s*=\\s*\"([^\"]*)\"").matcher(updated);
+        StringBuffer attrBuffer = new StringBuffer();
+        while (matcher.find()) {
+            String testExpr = matcher.group(1);
+            String renamed = XmlFieldSyncSupport.renameTestExpression(testExpr, oldName, newName);
+            matcher.appendReplacement(attrBuffer, Matcher.quoteReplacement("test=\"" + renamed + "\""));
+        }
+        matcher.appendTail(attrBuffer);
+        updated = attrBuffer.toString();
+
+        updated = renameDelimitedExpressions(updated, oldName, newName, "#");
+        updated = renameDelimitedExpressions(updated, oldName, newName, "$");
+        return updated;
+    }
+
+    private @NotNull String renameDelimitedExpressions(@NotNull String text, @NotNull String oldName,
+            @NotNull String newName, @NotNull String prefix) {
+        Pattern pattern = Pattern.compile(Pattern.quote(prefix) + "\\{([^}]*)}");
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String expr = matcher.group(1);
+            String renamed = XmlFieldSyncSupport.renameTestExpression(expr, oldName, newName);
+            matcher.appendReplacement(buffer,
+                    Matcher.quoteReplacement(prefix + "{" + renamed + "}"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private @NotNull String resolveFieldComment(@NotNull FieldInfo field) {
+        String docText = field.psiField().getDocComment() == null ? "" : field.psiField().getDocComment().getText();
+        String extracted = XmlFieldSyncSupport.extractFieldComment(docText);
+        if (!extracted.isBlank()) {
+            return extracted;
+        }
+        PsiElement sibling = field.psiField().getPrevSibling();
+        while (sibling instanceof PsiWhiteSpace) {
+            sibling = sibling.getPrevSibling();
+        }
+        if (sibling instanceof PsiComment psiComment) {
+            return XmlFieldSyncSupport.extractFieldComment(psiComment.getText());
+        }
+        return "";
     }
 
     /**
@@ -1116,6 +1300,10 @@ public final class FieldSyncService {
         List<XmlTag> result = new ArrayList<>();
         findNestedTagsByName(root, tagName, result);
         return result;
+    }
+
+    public record ReverseGenerationResult(@NotNull List<XmlFieldSyncSupport.XmlFieldDraft> newDrafts,
+                                          @NotNull List<String> conflicts) {
     }
 
     private void findNestedTagsByName(@NotNull XmlTag root, @NotNull String tagName, @NotNull List<XmlTag> out) {

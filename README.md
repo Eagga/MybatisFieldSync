@@ -1,6 +1,6 @@
 # MyBatis Field Sync
 
-`MyBatis Field Sync` 是一个 IntelliJ IDEA 插件，用于从 Java 实体类中选择字段，并将字段同步到 MyBatis Mapper XML 的指定 Statement（`insert` / `update` / `base_column_list`）。
+`MyBatis Field Sync` 是一个 IntelliJ IDEA 插件，用于在 Java 实体类与 MyBatis Mapper XML 之间做双向字段同步、注释同步与重构联动，支持 `insert` / `update` / `base_column_list` / `resultMap` 等常见片段。
 
 ## 功能特性
 
@@ -18,6 +18,18 @@
   - 按 `mapper namespace` 与类名/全限定名匹配
 - Statement 选择：自动读取 XML 中可用的 `id`（包括 `<resultMap>` 标签）
 - Statement 支持多选（可一次同步多个 insert/update/base_column_list/resultMap）
+- **XML 反向生成实体字段**：
+  - 在 XML 编辑器中右键 `MyBatis Field Sync` -> `Generate Fields From XML`
+  - 支持从当前选中的 `resultMap` 或 `base_column_list` 片段生成 Java 字段草稿
+  - 支持预览生成内容后再写入实体类
+  - 同名字段不会覆盖，预览与通知中会提示冲突字段
+- **字段注释同步到 XML 注释**：
+  - 在 Java 实体类中右键 `MyBatis Field Sync` -> `Sync Field Comments to XML`
+  - 支持将 Java 字段 JavaDoc/紧邻注释同步到对应 SQL 列注释或 `<result>` 前注释
+  - 保持 XML 中原有缩进和换行风格
+- **字段重命名联动更新 XML**：
+  - Java 字段执行 IDEA Rename 后，自动联动更新候选 Mapper XML 中的 `#{}`、`${}`、`<if test="">`、`<result property="">`
+  - 走 `WriteCommandAction` / IDE Refactor 链路，支持 Undo / Redo
 
 ### 智能同步策略
 - **`insert`**：优先对 `<trim>` 的列和值做增量补齐并保持对应关系；若已使用 `<if>`，新增项同样使用 `<if>` 风格；支持基于 `<foreach>` 的批量插入语句
@@ -51,6 +63,7 @@
 - **SQL 语法检测**：MyBatis XML 中的 SQL 语句实时语法检查，错误标红提示（需启用 IDEA 的 Database Tools and SQL 插件）
 - **参数智能处理**：自动将 `#{...}` 和 `${...}` 转换为 SQL 占位符进行语法分析
 - **同步预览**：先预览目标文本、确认后再执行，防止误修改；仅预览/取消不会写入同步历史
+- **反向字段草稿预览**：从 XML 反向生成实体字段时，先展示字段草稿和冲突列表，确认后再写入类中
 - **字段过滤**：自动忽略带 `@TableField(exist=false)` 或 `@Transient` 注解的字段
 - **MyBatis-Plus 注解支持（已实现范围）**：
   - `@TableName`：用于 SQL 生成与数据库表匹配时的表名解析（未标注时回退类名驼峰转下划线）
@@ -237,6 +250,29 @@ PLUGIN_VERSION=1.0.1 PUBLISH_CHANNEL=default ./gradlew signPlugin publishPlugin
    - 勾选要同步的字段（可全选/全不选）
    - 可切换是否包含父类字段
 4. 预览同步结果，确认后执行
+
+#### 从 XML 反向生成字段
+1. 打开 Mapper XML 文件
+2. 将光标放在 `resultMap` 或 `base_column_list` 内，或直接选中其中一段 XML 文本
+3. 右键选择 `MyBatis Field Sync` -> `Generate Fields From XML`
+4. 插件会优先使用 `resultMap type/javaType/ofType` 推断实体类；若当前片段来自 `base_column_list`，则尝试根据 `mapper namespace` 推断实体
+5. 预览字段草稿与冲突项，确认后写入实体类
+
+#### 字段注释同步到 XML
+1. 打开 Java 实体类文件
+2. 右键选择 `MyBatis Field Sync` -> `Sync Field Comments to XML`
+3. 选择目标 XML、目标 Statement 与字段
+4. 预览 XML 注释变更，确认后执行
+5. 若字段已有同缩进注释，会就地替换；没有则自动插入注释行
+
+#### 字段重命名联动
+1. 在 Java 实体字段上执行 IDEA Rename
+2. 插件会自动更新对应 Mapper XML 中的：
+   - `#{field}`
+   - `${field}`
+   - `<if test="field != null">`
+   - `<result property="field">`
+3. 所有改动可直接使用 IDE Undo / Redo 回退或重做
 
 #### CRUD 模板生成
 1. 打开 Java 实体类文件
@@ -516,26 +552,21 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 ## 后续可扩展方向
 
 ### 代码生成增强
-- 从 XML 反向生成实体类字段
-- 生成常用 CRUD 模板（增删改查）
-- 生成 Mapper 接口方法声明
-- 批量同步多个实体类
+- 从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
+- 批量同步多个实体类（带预览与结果汇总）
 
 ### 智能重构
-- 字段重命名时自动更新 XML 中的引用
-- 字段注释同步到 XML 注释
-- XML 格式化配置（缩进、换行风格）
+- 字段重命名联动更新 XML 引用（`#{}`、`${}`、`test`、`resultMap property`）
+- 字段注释同步到 XML 注释（正向）
+- XML 格式化策略配置（缩进、换行、逗号风格）
 
 ### 框架集成
 - 增强 MyBatis-Plus 注解支持（如更多注解属性和场景）
-- TypeHandler 自定义类型映射
+- TypeHandler 自定义类型映射（生成与同步双向生效）
 - 增强 `<choose>/<when>/<otherwise>` 更复杂嵌套动态标签场景
 
 ### 用户体验
-- 添加快捷键支持
-- 提供同步历史记录功能
 - 支持多模块项目的 XML 自动查找
-- 支持动态表名场景
 
 ## TODO List
 
@@ -547,8 +578,12 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持 SQL 代码提示与错误标红提示
 - [x] 支持 mybatis sql 日志过滤预览功能
 - [x] 集成 IDEA Database 工具增强类型映射和补全
-- [ ] 支持从 XML 反向生成实体类字段
-- [ ] 支持字段注释同步到 XML 注释
+- [ ] 支持从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
+  完成标准：可从选定 XML 片段生成字段草稿并写入实体；支持预览；同名字段不覆盖并提示冲突。
+- [ ] 支持字段注释同步到 XML 注释（正向）
+  完成标准：Java 字段注释可同步到对应 SQL 列或 `<result>` 前注释；保持原有缩进和换行风格。
+- [ ] 支持字段重命名联动更新 XML 引用（refactor-safe）
+  完成标准：IDE Rename 后自动更新 `#{}`、`${}`、`<if test="">`、`<result property="">`，且支持 Undo/Redo。
 
 ### 中优先级
 - [x] 支持 `where` 条件片段同步
@@ -558,14 +593,17 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持 `<choose>/<when>/<otherwise>` 动态标签
 - [x] 支持 MyBatis-Plus 注解（`@TableName` 表名解析、`@TableId` 主键解析、`@TableField(exist=false)` 字段过滤）
 - [x] 支持生成常用 CRUD 模板
-- [ ] 支持字段重命名时自动更新 XML
+- [ ] 支持多模块项目的 XML 自动查找（module-aware）
+  完成标准：同名 XML 跨模块冲突时按“同模块优先、依赖模块次之”排序候选。
+- [ ] 支持批量同步多个实体类（Batch Sync Wizard）
+  完成标准：支持多实体选择、逐项预览、失败项不中断、最终汇总报告。
 
 ### 低优先级
 - [x] 支持动态表名场景
 - [x] 添加快捷键支持
 - [x] 提供同步历史记录功能
 - [x] 支持生成 Mapper 接口方法
-- [ ] 支持多模块项目的 XML 自动查找
-- [ ] 支持 XML 格式化配置
-- [ ] 支持批量同步多个实体类
-- [ ] 支持 TypeHandler 自定义类型映射
+- [ ] 支持 XML 格式化策略配置（缩进/换行/逗号风格）
+  完成标准：设置页可配置格式策略，同步后输出稳定且不破坏现有风格。
+- [ ] 支持 TypeHandler 自定义类型映射（生成与同步双向生效）
+  完成标准：配置后自动生成 `typeHandler` 属性，并与 `jdbcType` 配置兼容。

@@ -22,6 +22,7 @@
         <codeInsight.lineMarkerProvider language="XML" implementationClass="com.eagga.mybatisfieldsync.marker.XmlLineMarkerProvider"/>
         <multiHostInjector implementation="com.eagga.mybatisfieldsync.injector.MyBatisSqlLanguageInjector"/>
         <completion.contributor language="JAVA" implementationClass="com.eagga.mybatisfieldsync.completion.MapperMethodCompletionContributor"/>
+        <refactoring.elementListenerProvider implementation="com.eagga.mybatisfieldsync.refactor.MyBatisFieldRenameListenerProvider"/>
         <toolWindow id="MyBatis SQL Preview"
                     anchor="right"
                     icon="/META-INF/pluginIcon.svg"
@@ -51,6 +52,16 @@
                     description="Generate methods in Mapper interface">
                 <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt M"/>
             </action>
+
+            <action id="com.eagga.mybatisfieldsync.action.SyncFieldCommentsToXmlAction"
+                    class="com.eagga.mybatisfieldsync.action.SyncFieldCommentsToXmlAction"
+                    text="Sync Field Comments to XML"
+                    description="Sync Java field comments to MyBatis XML comments"/>
+
+            <action id="com.eagga.mybatisfieldsync.action.GenerateFieldsFromXmlAction"
+                    class="com.eagga.mybatisfieldsync.action.GenerateFieldsFromXmlAction"
+                    text="Generate Fields From XML"
+                    description="Generate Java entity fields from selected MyBatis XML fragment"/>
 
             <separator/>
 
