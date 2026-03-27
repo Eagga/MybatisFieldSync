@@ -16,6 +16,8 @@ public final class XmlFieldSyncSupport {
     private static final Pattern RESULT_TAG_PATTERN = Pattern.compile("<(id|result)\\b([^>]*)/?>",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern XML_COMMENT_LINE_PATTERN = Pattern.compile("^(\\s*)<!--.*-->\\s*$");
+    private static final Pattern COLUMN_ALIAS_PATTERN = Pattern.compile("(?i)^(.+?)\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*)$");
+    private static final Pattern COLUMN_ALIAS_WITHOUT_AS_PATTERN = Pattern.compile("^(.+?)\\s+([A-Za-z_][A-Za-z0-9_]*)$");
     private static final Map<String, String> JDBC_TO_JAVA = Map.ofEntries(
             Map.entry("VARCHAR", "String"),
             Map.entry("CHAR", "String"),
@@ -66,20 +68,30 @@ public final class XmlFieldSyncSupport {
         String[] rawColumns = cleaned.split(",");
         List<XmlFieldDraft> drafts = new ArrayList<>();
         for (String rawColumn : rawColumns) {
-            String column = rawColumn
-                    .replaceAll("[\\r\\n\\t]", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
-            if (column.isEmpty()) {
-                continue;
+            XmlFieldDraft draft = parseBaseColumnDraft(rawColumn);
+            if (draft != null) {
+                drafts.add(draft);
             }
-            column = column.replace("`", "").replace("\"", "");
-            if (!column.matches("[A-Za-z0-9_$.]+")) {
-                continue;
-            }
-            drafts.add(new XmlFieldDraft(snakeToCamel(column), column, null, null));
         }
         return dedupeByFieldName(drafts);
+    }
+
+    public static @NotNull Pattern resultMappingPattern(@NotNull String property, @Nullable String column) {
+        StringBuilder pattern = new StringBuilder("(?is)<(?:id|result)\\b");
+        pattern.append("(?=[^>]*\\bproperty\\s*=\\s*(?:\"")
+                .append(Pattern.quote(property))
+                .append("\"|'")
+                .append(Pattern.quote(property))
+                .append("'))");
+        if (column != null && !column.isBlank()) {
+            pattern.append("(?=[^>]*\\bcolumn\\s*=\\s*(?:\"")
+                    .append(Pattern.quote(column))
+                    .append("\"|'")
+                    .append(Pattern.quote(column))
+                    .append("'))");
+        }
+        pattern.append("[^>]*/?>");
+        return Pattern.compile(pattern.toString());
     }
 
     public static @NotNull String toJavaFieldSnippet(@NotNull XmlFieldDraft draft) {
@@ -214,6 +226,36 @@ public final class XmlFieldSyncSupport {
         return JDBC_TO_JAVA.getOrDefault(jdbcType.toUpperCase(Locale.ROOT), "String");
     }
 
+    private static @Nullable XmlFieldDraft parseBaseColumnDraft(@NotNull String rawColumn) {
+        String candidate = rawColumn
+                .replaceAll("[\\r\\n\\t]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (candidate.isEmpty()) {
+            return null;
+        }
+
+        String alias = null;
+        Matcher aliasMatcher = COLUMN_ALIAS_PATTERN.matcher(candidate);
+        if (aliasMatcher.matches()) {
+            candidate = aliasMatcher.group(1).trim();
+            alias = aliasMatcher.group(2).trim();
+        } else {
+            Matcher shortAliasMatcher = COLUMN_ALIAS_WITHOUT_AS_PATTERN.matcher(candidate);
+            if (shortAliasMatcher.matches() && !shortAliasMatcher.group(1).contains(" ")) {
+                candidate = shortAliasMatcher.group(1).trim();
+                alias = shortAliasMatcher.group(2).trim();
+            }
+        }
+
+        String columnName = normalizeColumnName(candidate);
+        if (columnName == null) {
+            return null;
+        }
+        String fieldName = toJavaFieldName(alias == null ? columnName : alias);
+        return fieldName == null ? null : new XmlFieldDraft(fieldName, columnName, null, null);
+    }
+
     private static @NotNull String renameTokenInExpressions(@NotNull String text,
             @NotNull String oldName,
             @NotNull String newName,
@@ -250,6 +292,35 @@ public final class XmlFieldSyncSupport {
         Matcher matcher = Pattern.compile(attrName + "\\s*=\\s*\"([^\"]*)\"", Pattern.CASE_INSENSITIVE)
                 .matcher(tagText);
         return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static @Nullable String normalizeColumnName(@NotNull String candidate) {
+        String normalized = candidate.replace("`", "").replace("\"", "").trim();
+        int dotIndex = normalized.lastIndexOf('.');
+        if (dotIndex >= 0) {
+            normalized = normalized.substring(dotIndex + 1);
+        }
+        if (!normalized.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private static @Nullable String toJavaFieldName(@NotNull String candidate) {
+        String normalized = candidate.replace("`", "").replace("\"", "").trim();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        String fieldName = normalized.contains("_") ? snakeToCamel(normalized) : normalized;
+        if (!Character.isJavaIdentifierStart(fieldName.charAt(0))) {
+            return null;
+        }
+        for (int i = 1; i < fieldName.length(); i++) {
+            if (!Character.isJavaIdentifierPart(fieldName.charAt(i))) {
+                return null;
+            }
+        }
+        return fieldName;
     }
 
     private static @NotNull String detectIndent(@NotNull String line) {

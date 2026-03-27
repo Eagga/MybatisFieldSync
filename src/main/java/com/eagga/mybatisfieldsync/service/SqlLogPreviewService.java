@@ -129,7 +129,7 @@ public final class SqlLogPreviewService {
         return line.substring(idx + keyword.length()).trim();
     }
 
-    private String renderSql(String preparingSql, String parameters) {
+    static @NotNull String renderSql(@NotNull String preparingSql, @NotNull String parameters) {
         List<String> params = parseParameters(parameters);
         Matcher matcher = PLACEHOLDER.matcher(preparingSql);
         StringBuffer sb = new StringBuffer(preparingSql.length() + 64);
@@ -143,7 +143,7 @@ public final class SqlLogPreviewService {
         return sb.toString();
     }
 
-    private List<String> parseParameters(String parameters) {
+    static @NotNull List<String> parseParameters(@NotNull String parameters) {
         List<String> parts = splitParameters(parameters);
         List<String> sqlLiterals = new ArrayList<>(parts.size());
         for (String part : parts) {
@@ -152,23 +152,28 @@ public final class SqlLogPreviewService {
         return sqlLiterals;
     }
 
-    private List<String> splitParameters(String input) {
+    static @NotNull List<String> splitParameters(String input) {
         List<String> result = new ArrayList<>();
         if (input == null || input.isBlank()) {
             return result;
         }
         StringBuilder token = new StringBuilder();
         int parenthesisLevel = 0;
+        boolean tokenMayEndWithType = false;
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
             if (c == '(') {
                 parenthesisLevel++;
+                tokenMayEndWithType = true;
             } else if (c == ')' && parenthesisLevel > 0) {
                 parenthesisLevel--;
             } else if (c == ',' && parenthesisLevel == 0) {
-                addToken(result, token);
-                token.setLength(0);
-                continue;
+                if (tokenMayEndWithType) {
+                    addToken(result, token);
+                    token.setLength(0);
+                    tokenMayEndWithType = false;
+                    continue;
+                }
             }
             token.append(c);
         }
@@ -176,14 +181,14 @@ public final class SqlLogPreviewService {
         return result;
     }
 
-    private void addToken(List<String> result, StringBuilder token) {
+    private static void addToken(List<String> result, StringBuilder token) {
         String item = token.toString().trim();
         if (!item.isEmpty()) {
             result.add(item);
         }
     }
 
-    private String toSqlLiteral(String raw) {
+    private static @NotNull String toSqlLiteral(@NotNull String raw) {
         String value = raw;
         String type = "";
         Matcher matcher = PARAM_TYPE.matcher(raw);
@@ -212,7 +217,7 @@ public final class SqlLogPreviewService {
         return quote(value);
     }
 
-    private String quote(String value) {
+    private static @NotNull String quote(@NotNull String value) {
         return "'" + value.replace("'", "''") + "'";
     }
 

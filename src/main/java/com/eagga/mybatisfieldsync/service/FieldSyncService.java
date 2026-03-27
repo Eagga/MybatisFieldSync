@@ -12,6 +12,7 @@ import com.eagga.mybatisfieldsync.util.NameUtil;
 import com.eagga.mybatisfieldsync.util.XmlFieldSyncSupport;
 import com.intellij.ide.highlighter.XmlFileType;
 import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.project.Project;
@@ -225,17 +226,66 @@ public final class FieldSyncService {
         if (Objects.equals(oldName, newName)) {
             return;
         }
-        for (XmlFile xmlFile : findCandidateXmlFiles(entityClass)) {
-            Document document = PsiDocumentManager.getInstance(project).getDocument(xmlFile);
-            if (document == null) {
-                continue;
-            }
-            String updated = renameFieldReferencesInText(document.getText(), oldName, newName);
-            if (!updated.equals(document.getText())) {
-                document.setText(updated);
-                PsiDocumentManager.getInstance(project).commitDocument(document);
-            }
+        List<XmlFile> xmlFiles = findCandidateXmlFiles(entityClass);
+        if (xmlFiles.isEmpty()) {
+            return;
         }
+
+        Runnable renameTask = () -> {
+            PsiDocumentManager documentManager = PsiDocumentManager.getInstance(project);
+            for (XmlFile xmlFile : xmlFiles) {
+                Document document = documentManager.getDocument(xmlFile);
+                if (document == null) {
+                    continue;
+                }
+                String original = document.getText();
+                String updated = renameFieldReferencesInText(original, oldName, newName);
+                if (!updated.equals(original)) {
+                    document.setText(updated);
+                    documentManager.commitDocument(document);
+                }
+            }
+        };
+
+        if (ApplicationManager.getApplication().isWriteAccessAllowed()) {
+            renameTask.run();
+            return;
+        }
+
+        WriteCommandAction.runWriteCommandAction(project,
+                "Rename MyBatis Field References",
+                null,
+                renameTask,
+                xmlFiles.toArray(PsiFile[]::new));
+    }
+
+    private @NotNull String renameFieldReferencesInText(@NotNull String xmlText, @NotNull String oldName,
+            @NotNull String newName) {
+        String updated = xmlText.replaceAll("(property\\s*=\\s*)([\"'])" + Pattern.quote(oldName) + "\\2",
+                "$1$2" + Matcher.quoteReplacement(newName) + "$2");
+
+        for (String attributeName : List.of("test", "collection", "item", "index")) {
+            updated = renameXmlAttributeExpression(updated, attributeName, oldName, newName);
+        }
+
+        updated = XmlFieldSyncSupport.renamePlaceholders(updated, oldName, newName);
+        updated = XmlFieldSyncSupport.renameDollarPlaceholders(updated, oldName, newName);
+        return updated;
+    }
+
+    private @NotNull String renameXmlAttributeExpression(@NotNull String xmlText,
+            @NotNull String attributeName,
+            @NotNull String oldName,
+            @NotNull String newName) {
+        Matcher matcher = Pattern.compile(attributeName + "\\s*=\\s*([\"'])(.*?)\\1").matcher(xmlText);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String renamed = XmlFieldSyncSupport.renameTestExpression(matcher.group(2), oldName, newName);
+            matcher.appendReplacement(buffer,
+                    Matcher.quoteReplacement(attributeName + "=" + matcher.group(1) + renamed + matcher.group(1)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     /**
@@ -380,41 +430,6 @@ public final class FieldSyncService {
         for (XmlTag subTag : tag.getSubTags()) {
             syncCommentsRecursively(subTag, selectedFields);
         }
-    }
-
-    private @NotNull String renameFieldReferencesInText(@NotNull String xmlText, @NotNull String oldName,
-            @NotNull String newName) {
-        String updated = xmlText.replaceAll("property\\s*=\\s*\"" + Pattern.quote(oldName) + "\"",
-                "property=\"" + Matcher.quoteReplacement(newName) + "\"");
-
-        Matcher matcher = Pattern.compile("test\\s*=\\s*\"([^\"]*)\"").matcher(updated);
-        StringBuffer attrBuffer = new StringBuffer();
-        while (matcher.find()) {
-            String testExpr = matcher.group(1);
-            String renamed = XmlFieldSyncSupport.renameTestExpression(testExpr, oldName, newName);
-            matcher.appendReplacement(attrBuffer, Matcher.quoteReplacement("test=\"" + renamed + "\""));
-        }
-        matcher.appendTail(attrBuffer);
-        updated = attrBuffer.toString();
-
-        updated = renameDelimitedExpressions(updated, oldName, newName, "#");
-        updated = renameDelimitedExpressions(updated, oldName, newName, "$");
-        return updated;
-    }
-
-    private @NotNull String renameDelimitedExpressions(@NotNull String text, @NotNull String oldName,
-            @NotNull String newName, @NotNull String prefix) {
-        Pattern pattern = Pattern.compile(Pattern.quote(prefix) + "\\{([^}]*)}");
-        Matcher matcher = pattern.matcher(text);
-        StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            String expr = matcher.group(1);
-            String renamed = XmlFieldSyncSupport.renameTestExpression(expr, oldName, newName);
-            matcher.appendReplacement(buffer,
-                    Matcher.quoteReplacement(prefix + "{" + renamed + "}"));
-        }
-        matcher.appendTail(buffer);
-        return buffer.toString();
     }
 
     private @NotNull String resolveFieldComment(@NotNull FieldInfo field) {
@@ -811,8 +826,7 @@ public final class FieldSyncService {
     private Pattern resultPatternFor(@NotNull FieldInfo field) {
         String column = NameUtil.camelToSnake(field.name());
         String property = field.name();
-        return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s+property=\""
-                + Pattern.quote(property) + "\"");
+        return XmlFieldSyncSupport.resultMappingPattern(property, column);
     }
 
     private void mergeInsertTrim(@NotNull XmlTag columnTrim,

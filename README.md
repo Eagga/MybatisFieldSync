@@ -578,12 +578,9 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持 SQL 代码提示与错误标红提示
 - [x] 支持 mybatis sql 日志过滤预览功能
 - [x] 集成 IDEA Database 工具增强类型映射和补全
-- [ ] 支持从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
-  完成标准：可从选定 XML 片段生成字段草稿并写入实体；支持预览；同名字段不覆盖并提示冲突。
-- [ ] 支持字段注释同步到 XML 注释（正向）
-  完成标准：Java 字段注释可同步到对应 SQL 列或 `<result>` 前注释；保持原有缩进和换行风格。
-- [ ] 支持字段重命名联动更新 XML 引用（refactor-safe）
-  完成标准：IDE Rename 后自动更新 `#{}`、`${}`、`<if test="">`、`<result property="">`，且支持 Undo/Redo。
+- [x] 支持从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
+- [x] 支持字段注释同步到 XML 注释（正向）
+- [x] 支持字段重命名联动更新 XML 引用（refactor-safe）
 
 ### 中优先级
 - [x] 支持 `where` 条件片段同步
