@@ -16,8 +16,14 @@
   - 按类名同名 XML（`ClassName.xml`）
   - 按 `ClassNameMapper.xml`
   - 按 `mapper namespace` 与类名/全限定名匹配
+  - 多模块重名 XML 冲突时按“同模块优先、依赖模块次之、其他模块最后”排序候选
 - Statement 选择：自动读取 XML 中可用的 `id`（包括 `<resultMap>` 标签）
 - Statement 支持多选（可一次同步多个 insert/update/base_column_list/resultMap）
+- **批量同步向导（Batch Sync Wizard）**：
+  - 在 Java 编辑器中右键 `MyBatis Field Sync` -> `Batch Sync Wizard`
+  - 支持一次勾选多个实体类，逐项进入现有字段/Statement 选择与预览流程
+  - 单项失败或跳过不会中断后续实体处理
+  - 处理完成后展示最终汇总报告
 - **XML 反向生成实体字段**：
   - 在 XML 编辑器中右键 `MyBatis Field Sync` -> `Generate Fields From XML`
   - 支持从当前选中的 `resultMap` 或 `base_column_list` 片段生成 Java 字段草稿
@@ -56,6 +62,7 @@
 - **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
 - **快捷键支持**：
   - `Ctrl+Alt+S`：字段同步
+  - `MyBatis Field Sync` -> `Batch Sync Wizard`：批量同步向导（菜单入口）
   - `Ctrl+Alt+G`：生成 CRUD 模板
   - `Ctrl+Alt+M`：生成 Mapper 方法
   - `Ctrl+Alt+H`：查看同步历史
@@ -103,8 +110,10 @@ mybatis-field-sync
 ├── src/main/java/com/eagga/mybatisfieldsync
 │   ├── action
 │   │   ├── SyncFieldsAction.java
+│   │   ├── BatchSyncWizardAction.java
 │   │   ├── GenerateCrudAction.java
-│   │   └── ViewSyncHistoryAction.java
+│   │   ├── ViewSyncHistoryAction.java
+│   │   └── SyncFieldsWorkflow.java
 │   ├── completion
 │   │   ├── MapperMethodCompletionContributor.java
 │   │   ├── MapperMethodInsertHandler.java
@@ -124,6 +133,7 @@ mybatis-field-sync
 │   │   └── XmlLineMarkerProvider.java
 │   ├── model
 │   │   ├── FieldInfo.java
+│   │   ├── EntitySyncResult.java
 │   │   ├── StatementInfo.java
 │   │   └── SyncException.java
 │   ├── service
@@ -138,9 +148,12 @@ mybatis-field-sync
 │   │   ├── SqlLogPreviewToolWindowFactory.java
 │   │   └── SqlLogPreviewPanel.java
 │   ├── ui
+│   │   ├── BatchSyncWizardDialog.java
+│   │   ├── BatchSyncEntityTableModel.java
 │   │   ├── FieldSelectionDialog.java
 │   │   ├── FieldSelectionTableModel.java
 │   │   ├── PreviewDialog.java
+│   │   ├── TextReportDialog.java
 │   │   ├── CrudTemplateDialog.java
 │   │   ├── SyncHistoryDialog.java
 │   │   ├── SimpleStatementRenderer.java
@@ -245,11 +258,20 @@ PLUGIN_VERSION=1.0.1 PUBLISH_CHANNEL=default ./gradlew signPlugin publishPlugin
 1. 打开 Java 实体类文件
 2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Sync Fields to XML`（或按 `Ctrl+Alt+S`）
 3. 在弹窗中：
-   - 选择目标 XML 文件
-   - 选择目标 Statement ID（支持多选）
-   - 勾选要同步的字段（可全选/全不选）
-   - 可切换是否包含父类字段
+  - 选择目标 XML 文件
+  - 选择目标 Statement ID（支持多选）
+  - 勾选要同步的字段（可全选/全不选）
+  - 可切换是否包含父类字段
 4. 预览同步结果，确认后执行
+5. 若同名 XML 分布在多个模块，候选列表会优先把当前实体所在模块的 XML 排到最前，其次是依赖模块里的 XML
+
+#### 批量同步向导
+1. 打开任意一个 Java 实体类文件
+2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Batch Sync Wizard`
+3. 在首个向导对话框中勾选多个实体类
+4. 插件会按所选顺序逐项打开原有的字段/Statement 选择与预览界面
+5. 某一项失败或手动跳过时，向导会继续处理后续实体
+6. 全部处理结束后，会弹出汇总报告，列出成功、部分成功、失败、跳过的实体与原因
 
 #### 从 XML 反向生成字段
 1. 打开 Mapper XML 文件
@@ -566,7 +588,8 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - 增强 `<choose>/<when>/<otherwise>` 更复杂嵌套动态标签场景
 
 ### 用户体验
-- 支持多模块项目的 XML 自动查找
+- 支持多模块项目的 XML 自动查找（同模块优先、依赖模块次之）
+- 支持批量同步多个实体类（逐项预览、失败不中断、最终汇总）
 
 ## TODO List
 
@@ -590,10 +613,8 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持 `<choose>/<when>/<otherwise>` 动态标签
 - [x] 支持 MyBatis-Plus 注解（`@TableName` 表名解析、`@TableId` 主键解析、`@TableField(exist=false)` 字段过滤）
 - [x] 支持生成常用 CRUD 模板
-- [ ] 支持多模块项目的 XML 自动查找（module-aware）
-  完成标准：同名 XML 跨模块冲突时按“同模块优先、依赖模块次之”排序候选。
-- [ ] 支持批量同步多个实体类（Batch Sync Wizard）
-  完成标准：支持多实体选择、逐项预览、失败项不中断、最终汇总报告。
+- [x] 支持多模块项目的 XML 自动查找（module-aware）
+- [x] 支持批量同步多个实体类（Batch Sync Wizard）
 
 ### 低优先级
 - [x] 支持动态表名场景

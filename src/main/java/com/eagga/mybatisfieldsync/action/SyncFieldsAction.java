@@ -1,13 +1,9 @@
 package com.eagga.mybatisfieldsync.action;
 
 import com.eagga.mybatisfieldsync.i18n.MyBatisFieldSyncBundle;
-import com.eagga.mybatisfieldsync.model.FieldInfo;
-import com.eagga.mybatisfieldsync.model.StatementInfo;
-import com.eagga.mybatisfieldsync.model.SyncException;
+import com.eagga.mybatisfieldsync.model.EntitySyncResult;
 import com.eagga.mybatisfieldsync.service.FieldSyncService;
-import com.eagga.mybatisfieldsync.ui.FieldSelectionDialog;
 import com.eagga.mybatisfieldsync.util.NotificationUtil;
-import com.intellij.openapi.actionSystem.ActionPlaces;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
@@ -19,15 +15,7 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.xml.XmlFile;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.ArrayList;
-import java.util.List;
-import com.intellij.psi.PsiFileFactory;
-import com.intellij.psi.xml.XmlTag;
-import com.eagga.mybatisfieldsync.ui.PreviewDialog;
-import com.intellij.openapi.application.ApplicationManager;
 
 /**
  * 字段同步功能的编辑器右键入口动作。
@@ -67,93 +55,8 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         }
 
         FieldSyncService service = project.getService(FieldSyncService.class);
-        List<XmlFile> xmlFiles = service.findCandidateXmlFiles(targetClass);
-        if (xmlFiles.isEmpty()) {
-            NotificationUtil.error(project, MyBatisFieldSyncBundle.message("notify.noXml", targetClass.getName()));
-            return;
-        }
-
-        FieldSelectionDialog dialog = new FieldSelectionDialog(project, service, targetClass, xmlFiles);
-        if (!dialog.showAndGet()) {
-            return;
-        }
-
-        List<FieldInfo> selectedFields = dialog.getSelectedFields();
-        if (selectedFields.isEmpty()) {
-            NotificationUtil.error(project, MyBatisFieldSyncBundle.message("notify.noField"));
-            return;
-        }
-        List<FieldInfo> allFieldsInOrder = dialog.getAllFieldsInOrder();
-
-        XmlFile xmlFile = dialog.getSelectedXmlFile();
-        List<StatementInfo> statements = dialog.getSelectedStatements();
-        if (xmlFile == null || statements.isEmpty()) {
-            NotificationUtil.error(project, MyBatisFieldSyncBundle.message("notify.noStatement"));
-            return;
-        }
-
-        // Preview feature
-        XmlFile copyFile = (XmlFile) PsiFileFactory.getInstance(project).createFileFromText(
-                xmlFile.getName(), xmlFile.getFileType(), xmlFile.getText());
-
-        List<String> preFailed = new ArrayList<>();
-        ApplicationManager.getApplication().runWriteAction(() -> {
-            for (StatementInfo stmt : statements) {
-                try {
-                    XmlTag mockTag = findEquivalentTag(copyFile, stmt.tag());
-                    if (mockTag != null) {
-                        StatementInfo mockStmt = new StatementInfo(stmt.id(), stmt.tagName(), mockTag);
-                        service.syncInWriteCommand(copyFile, mockStmt, selectedFields, allFieldsInOrder,
-                                targetClass.getName(), false);
-                    }
-                } catch (Exception ex) {
-                    preFailed.add(stmt.id() + ": " + ex.getMessage());
-                }
-            }
-        });
-
-        if (!preFailed.isEmpty() && preFailed.size() == statements.size()) {
-            NotificationUtil.error(project,
-                    MyBatisFieldSyncBundle.message("notify.sync.partialFailed", String.join("; ", preFailed)));
-            return;
-        }
-
-        PreviewDialog previewDialog = new PreviewDialog(project, copyFile.getText());
-        if (!previewDialog.showAndGet()) {
-            return;
-        }
-
-        // Execute actual
-        List<String> failedStatements = new ArrayList<>();
-        List<String> successStatementIds = new ArrayList<>();
-        int successCount = 0;
-        for (StatementInfo statement : statements) {
-            try {
-                service.syncInWriteCommand(xmlFile, statement, selectedFields, allFieldsInOrder, targetClass.getName());
-                successCount++;
-                successStatementIds.add(statement.id());
-            } catch (SyncException ex) {
-                failedStatements.add(statement.id() + ": " + ex.getMessage());
-            }
-        }
-
-        if (successCount > 0) {
-            if (successCount == 1) {
-                NotificationUtil.info(project,
-                        MyBatisFieldSyncBundle.message("notify.sync.success", selectedFields.size(),
-                                successStatementIds.get(0)));
-            } else {
-                String statementNames = String.join(", ", successStatementIds);
-                NotificationUtil.info(project,
-                        MyBatisFieldSyncBundle.message("notify.sync.success.multi", selectedFields.size(), successCount,
-                                statementNames));
-            }
-        }
-
-        if (!failedStatements.isEmpty()) {
-            NotificationUtil.error(project,
-                    MyBatisFieldSyncBundle.message("notify.sync.partialFailed", String.join("; ", failedStatements)));
-        }
+        EntitySyncResult result = SyncFieldsWorkflow.run(project, service, targetClass);
+        handleResult(project, result);
     }
 
     /**
@@ -175,16 +78,30 @@ public class SyncFieldsAction extends AnAction implements DumbAware {
         return null;
     }
 
-    private XmlTag findEquivalentTag(XmlFile file, XmlTag original) {
-        if (file.getRootTag() == null)
-            return null;
-        for (XmlTag child : file.getRootTag().getSubTags()) {
-            if (original.getName().equals(child.getName()) &&
-                    original.getAttributeValue("id") != null &&
-                    original.getAttributeValue("id").equals(child.getAttributeValue("id"))) {
-                return child;
+    private void handleResult(@NotNull Project project, @NotNull EntitySyncResult result) {
+        switch (result.status()) {
+            case SUCCESS -> NotificationUtil.info(project, buildSuccessMessage(result));
+            case PARTIAL_SUCCESS -> {
+                NotificationUtil.info(project, buildSuccessMessage(result));
+                NotificationUtil.error(project,
+                        MyBatisFieldSyncBundle.message("notify.sync.partialFailed",
+                                String.join("; ", result.failedStatements())));
+            }
+            case FAILED -> NotificationUtil.error(project, result.detailMessage());
+            case SKIPPED -> {
             }
         }
-        return null;
+    }
+
+    private @NotNull String buildSuccessMessage(@NotNull EntitySyncResult result) {
+        if (result.successCount() == 1) {
+            return MyBatisFieldSyncBundle.message("notify.sync.success",
+                    result.selectedFieldCount(),
+                    result.successStatementIds().get(0));
+        }
+        return MyBatisFieldSyncBundle.message("notify.sync.success.multi",
+                result.selectedFieldCount(),
+                result.successCount(),
+                String.join(", ", result.successStatementIds()));
     }
 }

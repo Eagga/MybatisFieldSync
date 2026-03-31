@@ -1,5 +1,7 @@
 package com.eagga.mybatisfieldsync.ui;
 
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.psi.xml.XmlFile;
 import com.intellij.ui.SimpleListCellRenderer;
 
@@ -15,6 +17,8 @@ public class SimpleXmlFileRenderer extends SimpleListCellRenderer<XmlFile> {
             setText("");
             return;
         }
-        setText(value.getVirtualFile().getPath());
+        Module module = ModuleUtilCore.findModuleForFile(value.getVirtualFile(), value.getProject());
+        String moduleName = module == null ? "no-module" : module.getName();
+        setText("[" + moduleName + "] " + value.getVirtualFile().getPath());
     }
 }

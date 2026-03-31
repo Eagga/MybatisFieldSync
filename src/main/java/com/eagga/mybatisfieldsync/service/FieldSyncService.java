@@ -11,11 +11,16 @@ import com.eagga.mybatisfieldsync.util.JdbcTypeUtil;
 import com.eagga.mybatisfieldsync.util.NameUtil;
 import com.eagga.mybatisfieldsync.util.XmlFieldSyncSupport;
 import com.intellij.ide.highlighter.XmlFileType;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.OrderEnumerator;
+import com.intellij.openapi.roots.ProjectFileIndex;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
@@ -35,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
@@ -149,7 +155,29 @@ public final class FieldSyncService {
             return true;
         }, scope);
 
-        return new ArrayList<>(files);
+        Module sourceModule = ModuleUtilCore.findModuleForPsiElement(psiClass);
+        Set<String> dependencyModuleNames = sourceModule == null ? Set.of() : collectDependencyModuleNames(sourceModule);
+        ProjectFileIndex fileIndex = ProjectFileIndex.getInstance(project);
+
+        return sortByModulePriority(new ArrayList<>(files),
+                xmlFile -> resolveModuleName(fileIndex, xmlFile),
+                this::resolveXmlPath,
+                sourceModule == null ? null : sourceModule.getName(),
+                dependencyModuleNames);
+    }
+
+    static <T> @NotNull List<T> sortByModulePriority(@NotNull List<T> candidates,
+            @NotNull Function<T, String> moduleNameExtractor,
+            @NotNull Function<T, String> pathExtractor,
+            String sourceModuleName,
+            @NotNull Set<String> dependencyModuleNames) {
+        List<T> sorted = new ArrayList<>(candidates);
+        sorted.sort(Comparator.<T>comparingInt(candidate -> resolveModulePriority(moduleNameExtractor.apply(candidate),
+                        sourceModuleName,
+                        dependencyModuleNames))
+                .thenComparing(candidate -> normalizeSortValue(pathExtractor.apply(candidate)),
+                        String.CASE_INSENSITIVE_ORDER));
+        return sorted;
     }
 
     /**
@@ -1318,6 +1346,53 @@ public final class FieldSyncService {
 
     public record ReverseGenerationResult(@NotNull List<XmlFieldSyncSupport.XmlFieldDraft> newDrafts,
                                           @NotNull List<String> conflicts) {
+    }
+
+    private @NotNull Set<String> collectDependencyModuleNames(@NotNull Module sourceModule) {
+        Set<String> dependencyModuleNames = new HashSet<>();
+        OrderEnumerator.orderEntries(sourceModule)
+                .recursively()
+                .withoutSdk()
+                .withoutLibraries()
+                .forEachModule(module -> {
+                    dependencyModuleNames.add(module.getName());
+                    return true;
+                });
+        dependencyModuleNames.remove(sourceModule.getName());
+        return dependencyModuleNames;
+    }
+
+    private String resolveModuleName(@NotNull ProjectFileIndex fileIndex, @NotNull XmlFile xmlFile) {
+        VirtualFile virtualFile = xmlFile.getVirtualFile();
+        if (virtualFile == null) {
+            return "";
+        }
+        Module module = fileIndex.getModuleForFile(virtualFile);
+        return module == null ? "" : module.getName();
+    }
+
+    private String resolveXmlPath(@NotNull XmlFile xmlFile) {
+        VirtualFile virtualFile = xmlFile.getVirtualFile();
+        return virtualFile == null ? xmlFile.getName() : virtualFile.getPath();
+    }
+
+    private static int resolveModulePriority(String candidateModuleName,
+            String sourceModuleName,
+            @NotNull Set<String> dependencyModuleNames) {
+        if (sourceModuleName == null || sourceModuleName.isBlank()) {
+            return 2;
+        }
+        if (Objects.equals(sourceModuleName, candidateModuleName)) {
+            return 0;
+        }
+        if (candidateModuleName != null && dependencyModuleNames.contains(candidateModuleName)) {
+            return 1;
+        }
+        return 2;
+    }
+
+    private static @NotNull String normalizeSortValue(String value) {
+        return value == null ? "" : value;
     }
 
     private void findNestedTagsByName(@NotNull XmlTag root, @NotNull String tagName, @NotNull List<XmlTag> out) {

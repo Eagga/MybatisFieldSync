@@ -39,6 +39,11 @@
                 <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt S"/>
             </action>
 
+            <action id="com.eagga.mybatisfieldsync.action.BatchSyncWizardAction"
+                    class="com.eagga.mybatisfieldsync.action.BatchSyncWizardAction"
+                    text="Batch Sync Wizard"
+                    description="Select multiple entities and sync them to MyBatis XML one by one"/>
+
             <action id="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
                     class="com.eagga.mybatisfieldsync.action.GenerateCrudAction"
                     text="Generate CRUD Template"
