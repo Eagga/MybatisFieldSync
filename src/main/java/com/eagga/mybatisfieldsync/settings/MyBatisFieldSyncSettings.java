@@ -15,6 +15,10 @@ public final class MyBatisFieldSyncSettings implements PersistentStateComponent<
 
     public static class State {
         public String customMappingConfig = "java.util.Date=TIMESTAMP\njava.math.BigDecimal=DECIMAL";
+        public String typeHandlerMappingConfig = "";
+        public String xmlIndentStyle = "AUTO";
+        public String xmlLineBreakStyle = "AUTO";
+        public String xmlCommaStyle = "AUTO";
     }
 
     public static MyBatisFieldSyncSettings getInstance(Project project) {

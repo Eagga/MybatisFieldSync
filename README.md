@@ -38,11 +38,11 @@
   - 走 `WriteCommandAction` / IDE Refactor 链路，支持 Undo / Redo
 
 ### 智能同步策略
-- **`insert`**：优先对 `<trim>` 的列和值做增量补齐并保持对应关系；若已使用 `<if>`，新增项同样使用 `<if>` 风格；支持基于 `<foreach>` 的批量插入语句
-- **`update`**：优先对 `<set>` 增量补齐；若已使用 `<if>`，新增项同样使用 `<if>` 风格；无 `<set>` 时回退更新 `SET ... WHERE` 区段
+- **`insert`**：优先对 `<trim>` 的列和值做增量补齐并保持对应关系；若已使用 `<if>`，新增项同样使用 `<if>` 风格；支持基于 `<foreach>` 的批量插入语句，并可识别多层 `choose/when/otherwise/foreach/trim` 嵌套分支
+- **`update`**：优先对 `<set>` 增量补齐；若已使用 `<if>`，新增项同样使用 `<if>` 风格；无 `<set>` 时回退更新 `SET ... WHERE` 区段；支持在多层 `choose/when/otherwise/trim` 分支内按原结构补齐赋值项
 - **`base_column_list`**：对 `<sql id=”...”>` 列表做增量补齐
-- **`where`**：对包含 `<where>` 标签（或 ID 包含 `where`）的片段添加增量条件
-- **`resultMap`**：对 `<resultMap>` 内的 `<result>` 标签做增量补齐，自动生成 `column`、`property`、`jdbcType` 属性
+- **`where`**：对包含 `<where>` 标签（或 ID 包含 `where`）的片段添加增量条件，支持在多层 `choose/when/otherwise/trim` 分支内补齐条件块
+- **`resultMap`**：对 `<resultMap>` 内的 `<result>` 标签做增量补齐，自动生成 `column`、`property`、`jdbcType`，并按配置追加 `typeHandler` 属性
 
 ### 高级功能
 - **JPA 风格方法名补全**：在 Mapper 接口中输入 `findBy`、`countBy`、`deleteBy`、`existsBy` 时自动提示字段组合，选择后自动生成方法签名和 XML SQL 语句
@@ -58,6 +58,8 @@
   - 需要 IntelliJ IDEA Ultimate 版本（Community 版本不支持 Database 插件）
 - **MyBatis SQL 日志过滤预览（右侧工具窗）**：在 IDEA 右侧打开 `MyBatis SQL Preview`，可开启/关闭过滤，实时预览本地运行日志中的 MyBatis 实际执行 SQL，支持一键清空
 - **CRUD 模板生成**：`MyBatis Field Sync` -> `Generate CRUD Template`，一键生成标准 CRUD 语句（INSERT、UPDATE、DELETE、SELECT、ResultMap）；模板默认使用动态表名 `${tableName}`，并在主键条件处优先采用 `@TableId`（无注解时回退到 `id` 字段）
+- **XML 格式策略配置**：在 IDEA 设置（`Settings -> Tools -> MyBatis Field Sync`）中配置 XML 缩进、换行、逗号风格；插件新增片段会优先继承现有 XML 风格，未探测到时再回退到设置值
+- **TypeHandler 自定义映射**：在 IDEA 设置中配置 `javaType=typeHandlerClass[,jdbcType=XXX]`；对 CRUD 模板生成和字段同步新增片段同时生效，并与已有 JdbcType 映射兼容
 - **Mapper 接口方法生成**：`MyBatis Field Sync` -> `Generate Mapper Methods`，自动在 Mapper 接口中生成标准方法（insert、update、delete、selectById、selectList），自动查找对应的 Mapper 接口（支持 EntityMapper 和 EntityDao 命名规范）；`delete/selectById` 参数会优先采用 `@TableId` 的字段名与类型
 - **同步历史记录**：`MyBatis Field Sync` -> `View Sync History` 查看所有同步操作历史，支持清空历史
 - **快捷键支持**：
@@ -76,11 +78,12 @@
   - `@TableName`：用于 SQL 生成与数据库表匹配时的表名解析（未标注时回退类名驼峰转下划线）
   - `@TableId`：用于 CRUD 条件与 Mapper 方法参数的主键解析
   - `@TableField(exist=false)`：用于字段过滤（不参与同步/补全）
-- **自定义映射**：在 IDEA 设置（Settings -> Tools -> MyBatis Field Sync）中配置 `javaType=jdbcType` 映射
+- **自定义映射**：在 IDEA 设置（Settings -> Tools -> MyBatis Field Sync）中配置 `javaType=jdbcType` 与 `javaType=typeHandlerClass[,jdbcType=XXX]` 映射
 
 ### 开发体验
 - 字段格式转换：`userName -> user_name`
 - 参数占位符：`#{userName,jdbcType=VARCHAR}`
+- TypeHandler 占位符：`#{createdAt,jdbcType=TIMESTAMP,typeHandler=com.demo.LocalDateTimeTypeHandler}`
 - 常用 Java -> JdbcType 映射内置
 - 使用 IDEA Notification 气泡反馈成功/失败
 - 所有写操作包裹在 `WriteCommandAction` 中，支持 Undo
@@ -515,7 +518,9 @@ public interface UserMapper {
 - `util/*`
   - 驼峰转下划线
   - Java/JdbcType 映射
+  - TypeHandler 映射解析
   - 缩进探测
+  - XML 格式策略解析
   - Notification 封装
 
 ## i18n
@@ -530,7 +535,7 @@ IDEA 根据系统/IDE 语言自动选择资源包。
 
 ### 当前限制
 - 触发入口注册在编辑器右键菜单（`EditorPopupMenu`）
-- 复杂动态 SQL（多层 `if/choose/foreach`）场景下，会优先更新标准块（`trim` / `set`）；若结构非常规，可能需人工微调
+- 超复杂动态 SQL 场景虽已支持多层 `if/choose/foreach/trim` 分支补齐，但若同一语句混合大量自定义脚本片段或非常规标签组合，仍建议先预览再执行
 - `base_column_list` 通过 `sql` 标签 + `id` 包含 `column` 判定，若团队命名规则不同，可在 Service 中扩展
 
 ### 最佳实践
@@ -546,10 +551,30 @@ IDEA 根据系统/IDE 语言自动选择资源包。
 A: 检查字段是否被 `@Transient` 或 `@TableField(exist=false)` 注解标记，或者是 `static` 字段
 
 **Q: 同步后 SQL 格式不符合团队规范？**
-A: 插件会保持原有缩进风格，如需调整可在设置中配置或手动格式化
+A: 插件会优先继承目标 XML 已有的缩进、换行与逗号风格；若当前片段探测不到风格，则回退到设置页中的 XML Formatting Strategy 配置
 
 **Q: 支持哪些 JdbcType？**
 A: 内置常用类型映射（String→VARCHAR、Integer→INTEGER 等），可在设置中自定义扩展
+
+**Q: TypeHandler 怎么配置？**
+A: 在 `Settings -> Tools -> MyBatis Field Sync` 的 `Custom TypeHandler Mapping` 中按行配置：
+
+```text
+java.time.LocalDateTime=com.demo.LocalDateTimeTypeHandler,jdbcType=TIMESTAMP
+com.demo.Money=com.demo.MoneyTypeHandler,jdbcType=DECIMAL
+```
+
+生成的占位符会类似：
+
+```xml
+#{createdAt,jdbcType=TIMESTAMP,typeHandler=com.demo.LocalDateTimeTypeHandler}
+```
+
+对应的 `resultMap` 也会自动附带：
+
+```xml
+<result column="created_at" property="createdAt" jdbcType="TIMESTAMP" typeHandler="com.demo.LocalDateTimeTypeHandler"/>
+```
 
 **Q: 如何处理复杂的动态 SQL？**
 A: 插件会尽量保持原有结构，对于特别复杂的场景建议先预览再执行
@@ -576,16 +601,24 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 ### 代码生成增强
 - 从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
 - 批量同步多个实体类（带预览与结果汇总）
+- 缺失 Mapper/XML 的一键初始化生成
+- 支持自定义 CRUD / XML 模板
 
 ### 智能重构
 - 字段重命名联动更新 XML 引用（`#{}`、`${}`、`test`、`resultMap property`）
 - 字段注释同步到 XML 注释（正向）
 - XML 格式化策略配置（缩进、换行、逗号风格）
+- 支持复杂动态 SQL 深层结构同步（多层 `if/choose/foreach/trim`）
+- 支持同步时清理已失效字段（可预览、可选择保留）
+- 支持 XML/Mapper 一致性检查与一键修复
+- 支持问题检查与 Quick Fix（Inspection / Intention Action）
 
 ### 框架集成
 - 增强 MyBatis-Plus 注解支持（如更多注解属性和场景）
 - TypeHandler 自定义类型映射（生成与同步双向生效）
 - 增强 `<choose>/<when>/<otherwise>` 更复杂嵌套动态标签场景
+- 支持 resultMap 高级结构同步（`id/constructor/association/collection/discriminator`）
+- 支持更多 MyBatis-Plus 注解语义（如 `@TableField(value=...)`、`@TableLogic`、`@Version`、字段填充策略）
 
 ### 用户体验
 - 支持多模块项目的 XML 自动查找（同模块优先、依赖模块次之）
@@ -604,6 +637,16 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
 - [x] 支持字段注释同步到 XML 注释（正向）
 - [x] 支持字段重命名联动更新 XML 引用（refactor-safe）
+- [x] 支持复杂动态 SQL 深层结构同步（多层 `if/choose/foreach/trim`）
+  完成标准：不仅支持当前标准块，还能在多层嵌套下稳定补齐字段，不破坏 `open/close/separator/prefixOverrides` 等已有语义，并提供最小回归测试。
+- [ ] 支持 resultMap 高级结构同步（`id/constructor/association/collection/discriminator`）
+  完成标准：除普通 `<result>` 外，可识别并增量维护 `id`、构造器映射、嵌套对象映射和集合映射，避免只在扁平 DTO 场景可用。
+- [ ] 支持同步时清理已失效字段（可预览、可选择保留）
+  完成标准：除补新字段外，也能识别 XML 中已不存在于实体类的旧字段映射、旧列、旧赋值项，并在预览中明确标出删除动作，默认安全可控。
+- [ ] 支持 XML/Mapper 一致性检查与一键修复
+  完成标准：可扫描 namespace、statement id、resultMap 引用、参数名、字段引用不一致的问题，并给出检查结果或批量修复入口。
+- [ ] 支持问题检查与 Quick Fix（Inspection / Intention Action）
+  完成标准：对“实体字段已新增但 XML 未同步”“resultMap 缺字段”“占位符名失配”等问题，在编辑器中直接提示并可一键修复。
 
 ### 中优先级
 - [x] 支持 `where` 条件片段同步
@@ -615,13 +658,19 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 - [x] 支持生成常用 CRUD 模板
 - [x] 支持多模块项目的 XML 自动查找（module-aware）
 - [x] 支持批量同步多个实体类（Batch Sync Wizard）
+- [ ] 支持缺失 Mapper/XML 的一键初始化生成
+  完成标准：当实体只存在 Java 类、Mapper 接口或 XML 之一时，可按约定自动补齐其余骨架，至少生成 namespace、`BaseResultMap`、`Base_Column_List` 和基础 CRUD。
+- [ ] 支持自定义 CRUD / XML 模板
+  完成标准：用户可在设置中定义或覆盖 insert/update/select/resultMap 模板，生成逻辑优先使用模板，兼容现有字段映射、JdbcType、TypeHandler 和格式策略。
+- [ ] 支持更多 MyBatis-Plus 注解语义
+  完成标准：补充 `@TableField(value=...)`、`@TableLogic`、`@Version`、字段填充策略、枚举等真实项目常见语义，不再只停留在 `@TableName/@TableId/@TableField(exist=false)`。
 
 ### 低优先级
 - [x] 支持动态表名场景
 - [x] 添加快捷键支持
 - [x] 提供同步历史记录功能
 - [x] 支持生成 Mapper 接口方法
-- [ ] 支持 XML 格式化策略配置（缩进/换行/逗号风格）
+- [x] 支持 XML 格式化策略配置（缩进/换行/逗号风格）
   完成标准：设置页可配置格式策略，同步后输出稳定且不破坏现有风格。
-- [ ] 支持 TypeHandler 自定义类型映射（生成与同步双向生效）
+- [x] 支持 TypeHandler 自定义类型映射（生成与同步双向生效）
   完成标准：配置后自动生成 `typeHandler` 属性，并与 `jdbcType` 配置兼容。

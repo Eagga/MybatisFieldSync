@@ -5,11 +5,15 @@ import com.eagga.mybatisfieldsync.i18n.MyBatisFieldSyncBundle;
 import com.eagga.mybatisfieldsync.model.FieldInfo;
 import com.eagga.mybatisfieldsync.model.StatementInfo;
 import com.eagga.mybatisfieldsync.model.SyncException;
-import com.eagga.mybatisfieldsync.util.IndentUtil;
 import com.eagga.mybatisfieldsync.util.FieldIgnoreUtil;
+import com.eagga.mybatisfieldsync.settings.MyBatisFieldSyncSettings;
+import com.eagga.mybatisfieldsync.util.IndentUtil;
 import com.eagga.mybatisfieldsync.util.JdbcTypeUtil;
 import com.eagga.mybatisfieldsync.util.NameUtil;
+import com.eagga.mybatisfieldsync.util.TypeMappingUtil;
+import com.eagga.mybatisfieldsync.util.XmlFormatSettingsUtil;
 import com.eagga.mybatisfieldsync.util.XmlFieldSyncSupport;
+import com.eagga.mybatisfieldsync.util.XmlMappingRenderUtil;
 import com.intellij.ide.highlighter.XmlFileType;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleUtilCore;
@@ -484,9 +488,16 @@ public final class FieldSyncService {
     private void syncInsert(@NotNull XmlTag insertTag,
             @NotNull List<FieldInfo> selectedFields,
             @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
-        List<XmlTag> trimTags = findNestedTagsByName(insertTag, "trim");
-        if (trimTags.size() >= 2) {
-            mergeInsertTrim(trimTags.get(0), trimTags.get(1), selectedFields, allFieldsInOrder);
+        List<DynamicSqlStructureSupport.InsertTrimPlan> trimPlans =
+                DynamicSqlStructureSupport.findInsertTrimPlans(new PsiXmlTagView(insertTag), false);
+        if (!trimPlans.isEmpty()) {
+            for (DynamicSqlStructureSupport.InsertTrimPlan trimPlan : trimPlans) {
+                XmlTag columnTrim = resolveTagByElementPath(insertTag, trimPlan.columnPath());
+                XmlTag valueTrim = resolveTagByElementPath(insertTag, trimPlan.valuePath());
+                if (columnTrim != null && valueTrim != null) {
+                    mergeInsertTrim(columnTrim, valueTrim, selectedFields, allFieldsInOrder);
+                }
+            }
             return;
         }
 
@@ -523,6 +534,23 @@ public final class FieldSyncService {
         if (foreachTags.isEmpty()) {
             throw new SyncException("Batch insert statement must contain <foreach> tag");
         }
+        List<DynamicSqlStructureSupport.InsertTrimPlan> trimPlans =
+                DynamicSqlStructureSupport.findInsertTrimPlans(new PsiXmlTagView(insertTag), true);
+        if (!trimPlans.isEmpty()) {
+            for (DynamicSqlStructureSupport.InsertTrimPlan trimPlan : trimPlans) {
+                XmlTag columnTrim = resolveTagByElementPath(insertTag, trimPlan.columnPath());
+                XmlTag valueTrim = resolveTagByElementPath(insertTag, trimPlan.valuePath());
+                if (columnTrim == null || valueTrim == null) {
+                    continue;
+                }
+                String item = trimPlan.foreachItem() == null || trimPlan.foreachItem().isBlank()
+                        ? "item"
+                        : trimPlan.foreachItem();
+                mergeBatchInsertTrim(columnTrim, valueTrim, item, selectedFields, allFieldsInOrder);
+            }
+            return;
+        }
+
         XmlTag foreachTag = foreachTags.get(0);
         String itemRaw = foreachTag.getAttributeValue("item");
         final String item = (itemRaw == null || itemRaw.isBlank()) ? "item" : itemRaw;
@@ -620,7 +648,7 @@ public final class FieldSyncService {
     }
 
     private String buildBatchParamPlaceholder(@NotNull FieldInfo fieldInfo, @NotNull String item) {
-        return "#{" + item + "." + fieldInfo.name() + ",jdbcType=" + fieldInfo.jdbcType() + "}";
+        return XmlMappingRenderUtil.buildParameterPlaceholder(item + "." + fieldInfo.name(), resolveTypeMapping(fieldInfo));
     }
 
     private boolean containsBatchValueEntry(@NotNull String body, @NotNull FieldInfo field, @NotNull String item) {
@@ -636,13 +664,17 @@ public final class FieldSyncService {
             @NotNull List<FieldInfo> allFieldsInOrder) throws SyncException {
         List<XmlTag> setTags = findNestedTagsByName(updateTag, "set");
         if (!setTags.isEmpty()) {
-            mergeSetTag(setTags.get(0), selectedFields, allFieldsInOrder);
+            for (XmlTag setTag : setTags) {
+                syncAssignmentContainers(setTag, selectedFields, allFieldsInOrder);
+            }
             return;
         }
 
         List<XmlTag> chooseTags = findNestedTagsByName(updateTag, "choose");
         if (!chooseTags.isEmpty()) {
-            mergeChooseTag(chooseTags.get(0), selectedFields, allFieldsInOrder);
+            for (XmlTag chooseTag : chooseTags) {
+                syncAssignmentContainers(chooseTag, selectedFields, allFieldsInOrder);
+            }
             return;
         }
 
@@ -733,18 +765,7 @@ public final class FieldSyncService {
             @NotNull List<FieldInfo> allFieldsInOrder) {
         List<XmlTag> nestedWhere = findNestedTagsByName(whereTagOwner, "where");
         XmlTag targetTag = nestedWhere.isEmpty() ? whereTagOwner : nestedWhere.get(0);
-
-        String indent = detectChildIndent(targetTag);
-        String childIndent = indent + IndentUtil.detectIndentUnit(targetTag.getText());
-
-        for (FieldInfo field : selectedFields) {
-            if (containsWhereCondition(targetTag.getText(), field)) {
-                continue;
-            }
-            String condition = "and " + NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field);
-            XmlTag ifTag = createIfTag(targetTag, buildIfTest(field), condition, childIndent);
-            insertIfTagByFieldOrder(targetTag, ifTag, allFieldsInOrder, field, this::containsWhereCondition);
-        }
+        syncConditionContainers(targetTag, selectedFields, allFieldsInOrder);
     }
 
     private boolean containsWhereCondition(@NotNull String body, @NotNull FieldInfo field) {
@@ -800,16 +821,13 @@ public final class FieldSyncService {
 
             String column = NameUtil.camelToSnake(field.name());
             String property = field.name();
-            String jdbcType = field.jdbcType();
-
             String entry;
             if (hasIfStyle) {
                 String testExpr = buildIfTest(field);
-                entry = String.format("\n%s<if test=\"%s\"> %s=%s#{%s,%s} </if>",
-                        childIndent, testExpr, column, property, property, jdbcType);
+                entry = String.format("\n%s<if test=\"%s\"> %s = %s, </if>",
+                        childIndent, testExpr, column, buildParamPlaceholder(field));
             } else {
-                entry = String.format("\n%s<result column=\"%s\" property=\"%s\" jdbcType=\"%s\"/>",
-                        childIndent, column, property, jdbcType);
+                entry = "\n" + childIndent + XmlMappingRenderUtil.buildResultTag(column, property, resolveTypeMapping(field));
             }
 
             body = insertResultEntryByFieldOrder(body, entry, allFieldsInOrder, field);
@@ -1026,6 +1044,117 @@ public final class FieldSyncService {
         }
     }
 
+    private void syncAssignmentContainers(@NotNull XmlTag root,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<List<Integer>> paths = DynamicSqlStructureSupport.findConditionalContainerPaths(new PsiXmlTagView(root));
+        for (List<Integer> path : paths) {
+            XmlTag container = resolveTagByElementPath(root, path);
+            if (container == null) {
+                continue;
+            }
+            mergeAssignmentContainer(container, selectedFields, allFieldsInOrder);
+        }
+    }
+
+    private void syncConditionContainers(@NotNull XmlTag root,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        List<List<Integer>> paths = DynamicSqlStructureSupport.findConditionalContainerPaths(new PsiXmlTagView(root));
+        for (List<Integer> path : paths) {
+            XmlTag container = resolveTagByElementPath(root, path);
+            if (container == null) {
+                continue;
+            }
+            mergeConditionContainer(container, selectedFields, allFieldsInOrder);
+        }
+    }
+
+    private void mergeAssignmentContainer(@NotNull XmlTag container,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        if (hasDirectChildTagByName(container, "if")) {
+            mergeGenericIfContainer(container,
+                    selectedFields,
+                    allFieldsInOrder,
+                    field -> NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field) + ",",
+                    this::containsUpdateAssignment);
+            return;
+        }
+        mergePlainTextContainer(container,
+                selectedFields,
+                allFieldsInOrder,
+                field -> NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field) + ",",
+                this::containsUpdateAssignment,
+                this::assignmentPatternFor);
+    }
+
+    private void mergeConditionContainer(@NotNull XmlTag container,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder) {
+        if (hasDirectChildTagByName(container, "if")) {
+            mergeGenericIfContainer(container,
+                    selectedFields,
+                    allFieldsInOrder,
+                    field -> "and " + NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field),
+                    this::containsWhereCondition);
+            return;
+        }
+        mergePlainTextContainer(container,
+                selectedFields,
+                allFieldsInOrder,
+                field -> "and " + NameUtil.camelToSnake(field.name()) + " = " + buildParamPlaceholder(field),
+                this::containsWhereCondition,
+                this::columnPatternFor);
+    }
+
+    private void mergeGenericIfContainer(@NotNull XmlTag container,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder,
+            @NotNull Function<FieldInfo, String> lineBuilder,
+            @NotNull BiPredicate<String, FieldInfo> matcher) {
+        String indent = detectChildIndent(container);
+        String childIndent = indent + IndentUtil.detectIndentUnit(container.getText());
+
+        for (FieldInfo field : selectedFields) {
+            if (matcher.test(container.getText(), field)) {
+                continue;
+            }
+            XmlTag ifTag = createIfTag(container, buildIfTest(field), lineBuilder.apply(field), childIndent);
+            insertIfTagByFieldOrder(container, ifTag, allFieldsInOrder, field, matcher);
+        }
+    }
+
+    private void mergePlainTextContainer(@NotNull XmlTag container,
+            @NotNull List<FieldInfo> selectedFields,
+            @NotNull List<FieldInfo> allFieldsInOrder,
+            @NotNull Function<FieldInfo, String> lineBuilder,
+            @NotNull BiPredicate<String, FieldInfo> matcher,
+            @NotNull Function<FieldInfo, Pattern> patternProvider) {
+        String body = container.getValue().getText();
+        String indent = detectEntryIndent(body);
+        boolean changed = false;
+        for (FieldInfo field : selectedFields) {
+            if (matcher.test(body, field)) {
+                continue;
+            }
+            body = insertPlainEntryByFieldOrder(body, lineBuilder.apply(field), indent, allFieldsInOrder, field, patternProvider);
+            changed = true;
+        }
+        if (changed) {
+            container.getValue().setText(body);
+        }
+    }
+
+    private boolean hasDirectChildTagByName(@NotNull XmlTag tag, @NotNull String name) {
+        for (XmlTag subTag : tag.getSubTags()) {
+            if (name.equalsIgnoreCase(subTag.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void insertIfTagByFieldOrder(@NotNull XmlTag parent,
             @NotNull XmlTag newIfTag,
             @NotNull List<FieldInfo> orderedFields,
@@ -1192,14 +1321,23 @@ public final class FieldSyncService {
     }
 
     private String appendEntry(@NotNull String body, @NotNull String entry, @NotNull String baseIndent) {
+        XmlFormatSettingsUtil.ResolvedXmlFormat format = resolveXmlFormat(body);
         String normalized = body.stripTrailing();
-        String indentedEntry = indentMultiline(entry, baseIndent);
+        String normalizedEntry = XmlFormatSettingsUtil.normalizeEntry(entry);
 
         if (normalized.isBlank()) {
-            return "\n" + indentedEntry + "\n";
+            if (format.lineBreakStyle() == XmlFormatSettingsUtil.LineBreakStyle.SINGLE_LINE) {
+                return normalizedEntry;
+            }
+            return "\n" + baseIndent + XmlFormatSettingsUtil.renderEntry(normalizedEntry, format, true) + "\n";
         }
 
-        return normalized + "\n" + indentedEntry + "\n";
+        if (format.lineBreakStyle() == XmlFormatSettingsUtil.LineBreakStyle.SINGLE_LINE) {
+            return normalized + (normalized.endsWith(",") ? " " : ", ") + normalizedEntry;
+        }
+
+        boolean firstEntry = !containsAnyConfiguredEntry(body);
+        return normalized + "\n" + baseIndent + XmlFormatSettingsUtil.renderEntry(normalizedEntry, format, firstEntry) + "\n";
     }
 
     private String insertPlainEntryByFieldOrder(@NotNull String body,
@@ -1208,22 +1346,35 @@ public final class FieldSyncService {
             @NotNull List<FieldInfo> orderedFields,
             @NotNull FieldInfo currentField,
             @NotNull Function<FieldInfo, Pattern> patternProvider) {
+        XmlFormatSettingsUtil.ResolvedXmlFormat format = resolveXmlFormat(body);
+        String normalizedEntry = XmlFormatSettingsUtil.normalizeEntry(entry);
         int currentIndex = orderedFields.indexOf(currentField);
         if (currentIndex < 0) {
-            return appendEntry(body, entry, baseIndent);
+            return appendEntry(body, normalizedEntry, baseIndent);
         }
 
+        int anchorOffset = -1;
         int anchorLineStart = -1;
         for (int i = currentIndex + 1; i < orderedFields.size(); i++) {
             Matcher matcher = patternProvider.apply(orderedFields.get(i)).matcher(body);
             if (matcher.find()) {
+                anchorOffset = matcher.start();
                 anchorLineStart = findLineStart(body, matcher.start());
                 break;
             }
         }
 
         if (anchorLineStart < 0) {
-            return appendEntry(body, entry, baseIndent);
+            return appendEntry(body, normalizedEntry, baseIndent);
+        }
+
+        if (format.lineBreakStyle() == XmlFormatSettingsUtil.LineBreakStyle.SINGLE_LINE) {
+            return insertInlineEntry(body, normalizedEntry, anchorOffset);
+        }
+
+        boolean hasPreviousEntry = hasPreviousConfiguredEntry(body, orderedFields, currentIndex, patternProvider);
+        if (format.commaStyle() == XmlFormatSettingsUtil.CommaStyle.LEADING) {
+            return insertLeadingMultilineEntry(body, normalizedEntry, baseIndent, anchorLineStart, hasPreviousEntry);
         }
 
         String prefix = body.substring(0, anchorLineStart);
@@ -1231,7 +1382,7 @@ public final class FieldSyncService {
         if (!prefix.endsWith("\n")) {
             prefix = prefix + "\n";
         }
-        return prefix + baseIndent + entry + "\n" + suffix;
+        return prefix + baseIndent + XmlFormatSettingsUtil.renderEntry(normalizedEntry, format, false) + "\n" + suffix;
     }
 
     private int findLineStart(@NotNull String text, int offset) {
@@ -1244,7 +1395,8 @@ public final class FieldSyncService {
 
     private Pattern columnPatternFor(@NotNull FieldInfo field) {
         String column = NameUtil.camelToSnake(field.name());
-        return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s*,");
+        return Pattern.compile("(?i)((^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s*,)|(,\\s*`?"
+                + Pattern.quote(column) + "`?(?=$|\\s|\\n))");
     }
 
     private Pattern valuePatternFor(@NotNull FieldInfo field) {
@@ -1254,20 +1406,6 @@ public final class FieldSyncService {
     private Pattern assignmentPatternFor(@NotNull FieldInfo field) {
         String column = NameUtil.camelToSnake(field.name());
         return Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s*=");
-    }
-
-    private String indentMultiline(@NotNull String text, @NotNull String indent) {
-        String[] lines = text.split("\\n", -1);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < lines.length; i++) {
-            if (!lines[i].isEmpty()) {
-                sb.append(indent).append(lines[i]);
-            }
-            if (i < lines.length - 1) {
-                sb.append('\n');
-            }
-        }
-        return sb.toString();
     }
 
     private String detectEntryIndent(@NotNull String body) {
@@ -1288,7 +1426,101 @@ public final class FieldSyncService {
     }
 
     private String buildParamPlaceholder(@NotNull FieldInfo fieldInfo) {
-        return "#{" + fieldInfo.name() + ",jdbcType=" + fieldInfo.jdbcType() + "}";
+        return XmlMappingRenderUtil.buildParameterPlaceholder(fieldInfo.name(), resolveTypeMapping(fieldInfo));
+    }
+
+    private @NotNull TypeMappingUtil.ResolvedTypeMapping resolveTypeMapping(@NotNull FieldInfo fieldInfo) {
+        return TypeMappingUtil.resolve(settingsState(), fieldInfo.psiField().getType().getCanonicalText(), fieldInfo.jdbcType());
+    }
+
+    private @NotNull MyBatisFieldSyncSettings.State settingsState() {
+        return MyBatisFieldSyncSettings.getInstance(project).getState();
+    }
+
+    private @NotNull XmlFormatSettingsUtil.ResolvedXmlFormat resolveXmlFormat(@NotNull String body) {
+        return XmlFormatSettingsUtil.resolve(settingsState(), body);
+    }
+
+    private boolean hasPreviousConfiguredEntry(@NotNull String body,
+            @NotNull List<FieldInfo> orderedFields,
+            int currentIndex,
+            @NotNull Function<FieldInfo, Pattern> patternProvider) {
+        for (int i = 0; i < currentIndex; i++) {
+            if (patternProvider.apply(orderedFields.get(i)).matcher(body).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsAnyConfiguredEntry(@NotNull String body) {
+        return body.lines().anyMatch(line -> !line.isBlank());
+    }
+
+    private @NotNull String insertInlineEntry(@NotNull String body, @NotNull String entry, int anchorOffset) {
+        String prefix = body.substring(0, anchorOffset).stripTrailing();
+        String suffix = body.substring(anchorOffset).stripLeading();
+        if (prefix.isBlank()) {
+            return entry + ", " + suffix;
+        }
+        String inserted = prefix + (prefix.endsWith(",") ? " " : ", ") + entry;
+        if (suffix.isBlank()) {
+            return inserted;
+        }
+        return inserted + ", " + suffix;
+    }
+
+    private @NotNull String insertLeadingMultilineEntry(@NotNull String body,
+            @NotNull String entry,
+            @NotNull String baseIndent,
+            int anchorLineStart,
+            boolean hasPreviousEntry) {
+        String prefix = body.substring(0, anchorLineStart);
+        String suffix = body.substring(anchorLineStart);
+        if (!prefix.endsWith("\n")) {
+            prefix = prefix + "\n";
+        }
+        String renderedEntry = baseIndent
+                + XmlFormatSettingsUtil.renderEntry(
+                        entry,
+                        new XmlFormatSettingsUtil.ResolvedXmlFormat(
+                                resolveXmlFormat(body).indentUnit(),
+                                XmlFormatSettingsUtil.LineBreakStyle.MULTI_LINE,
+                                XmlFormatSettingsUtil.CommaStyle.LEADING),
+                        !hasPreviousEntry)
+                + "\n";
+        if (!hasPreviousEntry) {
+            suffix = addLeadingCommaToLine(suffix);
+        }
+        return prefix + renderedEntry + suffix;
+    }
+
+    private @NotNull String addLeadingCommaToLine(@NotNull String text) {
+        int lineEnd = text.indexOf('\n');
+        String firstLine = lineEnd >= 0 ? text.substring(0, lineEnd) : text;
+        String remainder = lineEnd >= 0 ? text.substring(lineEnd) : "";
+        String trimmed = firstLine.stripLeading();
+        if (trimmed.startsWith(",")) {
+            return text;
+        }
+        int whitespace = 0;
+        while (whitespace < firstLine.length() && Character.isWhitespace(firstLine.charAt(whitespace))) {
+            whitespace++;
+        }
+        String updated = firstLine.substring(0, whitespace) + ", " + firstLine.substring(whitespace).stripLeading();
+        return updated + remainder;
+    }
+
+    private XmlTag resolveTagByElementPath(@NotNull XmlTag root, @NotNull List<Integer> path) {
+        XmlTag current = root;
+        for (Integer index : path) {
+            XmlTag[] children = current.getSubTags();
+            if (index < 0 || index >= children.length) {
+                return null;
+            }
+            current = children[index];
+        }
+        return current;
     }
 
     /**
@@ -1401,6 +1633,38 @@ public final class FieldSyncService {
                 out.add(subTag);
             }
             findNestedTagsByName(subTag, tagName, out);
+        }
+    }
+
+    private static final class PsiXmlTagView implements DynamicSqlStructureSupport.TagView {
+        private final XmlTag tag;
+
+        private PsiXmlTagView(@NotNull XmlTag tag) {
+            this.tag = tag;
+        }
+
+        @Override
+        public @NotNull String name() {
+            return tag.getName();
+        }
+
+        @Override
+        public @NotNull String text() {
+            return tag.getText();
+        }
+
+        @Override
+        public @NotNull List<PsiXmlTagView> children() {
+            List<PsiXmlTagView> children = new ArrayList<>();
+            for (XmlTag subTag : tag.getSubTags()) {
+                children.add(new PsiXmlTagView(subTag));
+            }
+            return children;
+        }
+
+        @Override
+        public String attribute(@NotNull String name) {
+            return tag.getAttributeValue(name);
         }
     }
 }
