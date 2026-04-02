@@ -246,6 +246,14 @@ PLUGIN_VERSION=1.0.1 PUBLISH_CHANNEL=default ./gradlew signPlugin publishPlugin
 
 > 注意：第二条命令需要你在环境变量或 `~/.gradle/gradle.properties` 中提供发布与签名凭据。
 
+## License
+
+本项目已在 GitHub 开源，采用 **Apache License 2.0**。
+
+- 许可证全文见：[LICENSE](./LICENSE)
+- 你可以在遵守 Apache-2.0 条款的前提下使用、修改和分发本项目代码
+- 若你基于本项目做二次分发，请保留许可证与相关版权说明
+
 ## 使用说明
 
 ### 基础使用
