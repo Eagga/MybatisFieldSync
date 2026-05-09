@@ -43,6 +43,7 @@ public class FieldSelectionDialog extends DialogWrapper {
     private final DefaultListModel<StatementInfo> statementListModel = new DefaultListModel<>();
     private final JBList<StatementInfo> statementList = new JBList<>(statementListModel);
     private final JBCheckBox includeInheritedBox = new JBCheckBox(MyBatisFieldSyncBundle.message("dialog.includeInherited"), true);
+    private final JBCheckBox cleanStaleFieldsBox = new JBCheckBox(MyBatisFieldSyncBundle.message("dialog.cleanStaleFields"), false);
     private final FieldSelectionTableModel tableModel = new FieldSelectionTableModel(
             MyBatisFieldSyncBundle.message("table.column.select"),
             MyBatisFieldSyncBundle.message("table.column.field"),
@@ -80,6 +81,10 @@ public class FieldSelectionDialog extends DialogWrapper {
 
     public List<StatementInfo> getSelectedStatements() {
         return statementList.getSelectedValuesList();
+    }
+
+    public boolean isCleanStaleFields() {
+        return cleanStaleFieldsBox.isSelected();
     }
 
     @Override
@@ -137,6 +142,9 @@ public class FieldSelectionDialog extends DialogWrapper {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.anchor = GridBagConstraints.WEST;
         panel.add(includeInheritedBox, gbc);
+
+        gbc.gridy = 3;
+        panel.add(cleanStaleFieldsBox, gbc);
 
         // Statement 列表依赖当前选择的 XML。
         xmlFileComboBox.addActionListener(e -> reloadStatements());

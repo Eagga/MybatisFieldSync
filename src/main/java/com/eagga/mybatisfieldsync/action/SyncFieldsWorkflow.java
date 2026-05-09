@@ -3,6 +3,7 @@ package com.eagga.mybatisfieldsync.action;
 import com.eagga.mybatisfieldsync.i18n.MyBatisFieldSyncBundle;
 import com.eagga.mybatisfieldsync.model.EntitySyncResult;
 import com.eagga.mybatisfieldsync.model.FieldInfo;
+import com.eagga.mybatisfieldsync.model.StaleFieldInfo;
 import com.eagga.mybatisfieldsync.model.StatementInfo;
 import com.eagga.mybatisfieldsync.model.SyncException;
 import com.eagga.mybatisfieldsync.service.FieldSyncService;
@@ -20,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 复用单实体“选择 -> 预览 -> 执行”同步链路。
+ * 复用单实体"选择 -> 预览 -> 执行"同步链路。
  */
 public final class SyncFieldsWorkflow {
     private SyncFieldsWorkflow() {
@@ -48,6 +49,7 @@ public final class SyncFieldsWorkflow {
             return EntitySyncResult.failed(entityName, MyBatisFieldSyncBundle.message("notify.noField"));
         }
         List<FieldInfo> allFieldsInOrder = dialog.getAllFieldsInOrder();
+        boolean cleanStale = dialog.isCleanStaleFields();
 
         XmlFile xmlFile = dialog.getSelectedXmlFile();
         List<StatementInfo> statements = dialog.getSelectedStatements();
@@ -55,11 +57,37 @@ public final class SyncFieldsWorkflow {
             return EntitySyncResult.failed(entityName, MyBatisFieldSyncBundle.message("notify.noStatement"));
         }
 
+        // Detect stale fields if cleanup is requested
+        List<StaleFieldInfo> allStaleFields = new ArrayList<>();
+        if (cleanStale) {
+            for (StatementInfo statement : statements) {
+                allStaleFields.addAll(service.detectStaleFields(statement, allFieldsInOrder));
+            }
+        }
+
         XmlFile previewFile = (XmlFile) PsiFileFactory.getInstance(project)
                 .createFileFromText(xmlFile.getName(), xmlFile.getFileType(), xmlFile.getText());
 
         List<String> previewFailures = new ArrayList<>();
         ApplicationManager.getApplication().runWriteAction(() -> {
+            // Apply stale field removal to preview
+            if (!allStaleFields.isEmpty()) {
+                for (StatementInfo statement : statements) {
+                    XmlTag previewTag = findEquivalentTag(previewFile, statement.tag());
+                    if (previewTag == null) {
+                        continue;
+                    }
+                    List<StaleFieldInfo> staleForStatement = allStaleFields.stream()
+                            .filter(s -> s.statementId().equals(statement.id()))
+                            .toList();
+                    if (!staleForStatement.isEmpty()) {
+                        StatementInfo previewStatement = new StatementInfo(statement.id(), statement.tagName(), previewTag);
+                        service.removeStaleFieldsDirect(previewStatement, staleForStatement);
+                    }
+                }
+            }
+
+            // Apply field sync to preview
             for (StatementInfo statement : statements) {
                 try {
                     XmlTag previewTag = findEquivalentTag(previewFile, statement.tag());
@@ -85,17 +113,37 @@ public final class SyncFieldsWorkflow {
                     MyBatisFieldSyncBundle.message("notify.preview.failed", String.join("; ", previewFailures)));
         }
 
+        // Build preview text with stale field summary
+        String previewText = buildPreviewText(previewFile.getText(), allStaleFields);
+
         PreviewDialog previewDialog = new PreviewDialog(project,
                 MyBatisFieldSyncBundle.message("dialog.preview.title", shortName),
                 MyBatisFieldSyncBundle.message("dialog.preview.execute"),
                 MyBatisFieldSyncBundle.message("dialog.preview.skip"),
-                previewFile.getText());
+                previewText);
         if (!previewDialog.showAndGet()) {
             return EntitySyncResult.skipped(entityName, MyBatisFieldSyncBundle.message("batch.item.skipped.preview"));
         }
 
+        // Execute: first remove stale fields, then sync new fields
         List<String> failedStatements = new ArrayList<>();
         List<String> successStatementIds = new ArrayList<>();
+
+        if (!allStaleFields.isEmpty()) {
+            for (StatementInfo statement : statements) {
+                List<StaleFieldInfo> staleForStatement = allStaleFields.stream()
+                        .filter(s -> s.statementId().equals(statement.id()))
+                        .toList();
+                if (!staleForStatement.isEmpty()) {
+                    try {
+                        service.removeStaleFieldsInWriteCommand(xmlFile, statement, staleForStatement);
+                    } catch (Exception ex) {
+                        failedStatements.add(statement.id() + " (cleanup): " + ex.getMessage());
+                    }
+                }
+            }
+        }
+
         for (StatementInfo statement : statements) {
             try {
                 service.syncInWriteCommand(xmlFile, statement, selectedFields, allFieldsInOrder, shortName);
@@ -117,6 +165,21 @@ public final class SyncFieldsWorkflow {
                     failedStatements);
         }
         return EntitySyncResult.failed(entityName, String.join("; ", failedStatements));
+    }
+
+    private static @NotNull String buildPreviewText(@NotNull String xmlContent,
+            @NotNull List<StaleFieldInfo> staleFields) {
+        if (staleFields.isEmpty()) {
+            return xmlContent;
+        }
+        StringBuilder header = new StringBuilder();
+        header.append("// ").append(MyBatisFieldSyncBundle.message("preview.stale.header",
+                staleFields.size())).append("\n");
+        for (StaleFieldInfo stale : staleFields) {
+            header.append("//   - ").append(stale.toString()).append("\n");
+        }
+        header.append("// ").append(MyBatisFieldSyncBundle.message("preview.stale.separator")).append("\n\n");
+        return header + xmlContent;
     }
 
     private static @NotNull String resolveEntityName(@NotNull PsiClass targetClass) {

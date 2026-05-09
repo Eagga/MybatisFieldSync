@@ -2,6 +2,18 @@
 
 `MyBatis Field Sync` 是一个 IntelliJ IDEA 插件，用于在 Java 实体类与 MyBatis Mapper XML 之间做双向字段同步、注释同步与重构联动，支持 `insert` / `update` / `base_column_list` / `resultMap` 等常见片段。
 
+## 文档导航
+
+- 架构与目录：[`docs/architecture/project-map.md`](./docs/architecture/project-map.md)
+- 包职责：[`docs/architecture/package-responsibilities.md`](./docs/architecture/package-responsibilities.md)
+- 本地开发：[`docs/development/local-dev.md`](./docs/development/local-dev.md)
+- 测试与验证：[`docs/development/testing-and-verification.md`](./docs/development/testing-and-verification.md)
+- 发布与 Marketplace：[`docs/development/release-and-marketplace.md`](./docs/development/release-and-marketplace.md)
+- 功能矩阵：[`docs/product/feature-matrix.md`](./docs/product/feature-matrix.md)
+- 使用指南：[`docs/product/usage-guide.md`](./docs/product/usage-guide.md)
+- 同步边界：[`docs/product/sync-boundaries.md`](./docs/product/sync-boundaries.md)
+- 路线图与限制：[`docs/maintenance/roadmap.md`](./docs/maintenance/roadmap.md)、[`docs/maintenance/known-constraints.md`](./docs/maintenance/known-constraints.md)
+
 ## 功能特性
 
 ### 基础功能
@@ -105,80 +117,10 @@
 
 ## 工程结构
 
-```text
-mybatis-field-sync
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradle.properties
-├── src/main/java/com/eagga/mybatisfieldsync
-│   ├── action
-│   │   ├── SyncFieldsAction.java
-│   │   ├── BatchSyncWizardAction.java
-│   │   ├── GenerateCrudAction.java
-│   │   ├── ViewSyncHistoryAction.java
-│   │   └── SyncFieldsWorkflow.java
-│   ├── completion
-│   │   ├── MapperMethodCompletionContributor.java
-│   │   ├── MapperMethodInsertHandler.java
-│   │   ├── MethodNameParser.java
-│   │   ├── SqlGenerator.java
-│   │   └── XmlStatementGenerator.java
-│   ├── database
-│   │   ├── DatabaseConnectionService.java
-│   │   ├── DatabaseTypeMapper.java
-│   │   └── DatabaseFieldEnhancer.java
-│   ├── i18n
-│   │   └── MyBatisFieldSyncBundle.java
-│   ├── injector
-│   │   └── MyBatisSqlLanguageInjector.java
-│   ├── marker
-│   │   ├── MapperLineMarkerProvider.java
-│   │   └── XmlLineMarkerProvider.java
-│   ├── model
-│   │   ├── FieldInfo.java
-│   │   ├── EntitySyncResult.java
-│   │   ├── StatementInfo.java
-│   │   └── SyncException.java
-│   ├── service
-│   │   ├── FieldSyncService.java
-│   │   ├── CrudTemplateService.java
-│   │   ├── SyncHistoryService.java
-│   │   └── SqlLogPreviewService.java
-│   ├── settings
-│   │   ├── MyBatisFieldSyncSettings.java
-│   │   └── MyBatisFieldSyncConfigurable.java
-│   ├── toolwindow
-│   │   ├── SqlLogPreviewToolWindowFactory.java
-│   │   └── SqlLogPreviewPanel.java
-│   ├── ui
-│   │   ├── BatchSyncWizardDialog.java
-│   │   ├── BatchSyncEntityTableModel.java
-│   │   ├── FieldSelectionDialog.java
-│   │   ├── FieldSelectionTableModel.java
-│   │   ├── PreviewDialog.java
-│   │   ├── TextReportDialog.java
-│   │   ├── CrudTemplateDialog.java
-│   │   ├── SyncHistoryDialog.java
-│   │   ├── SimpleStatementRenderer.java
-│   │   └── SimpleXmlFileRenderer.java
-│   └── util
-│       ├── IndentUtil.java
-│       ├── JdbcTypeUtil.java
-│       ├── NameUtil.java
-│       ├── FieldIgnoreUtil.java
-│       └── NotificationUtil.java
-├── src/test/java/com/eagga/mybatisfieldsync/completion
-│   ├── MethodNameParserTest.java
-│   └── SqlGeneratorTest.java
-└── src/main/resources
-    ├── META-INF
-    │   ├── plugin.xml
-    │   ├── database-support.xml
-    │   └── pluginIcon.svg
-    └── messages
-        ├── MyBatisFieldSyncBundle.properties
-        └── MyBatisFieldSyncBundle_zh_CN.properties
-```
+仓库采用单模块 Gradle 结构，源码位于 `src/`，系统文档统一收敛到 `docs/`。
+
+- 顶层结构与关键入口：[`docs/architecture/project-map.md`](./docs/architecture/project-map.md)
+- 代码包职责：[`docs/architecture/package-responsibilities.md`](./docs/architecture/package-responsibilities.md)
 
 ## 安装与运行
 
@@ -256,280 +198,43 @@ PLUGIN_VERSION=1.0.1 PUBLISH_CHANNEL=default ./gradlew signPlugin publishPlugin
 
 ## 使用说明
 
-### 基础使用
+详细操作步骤、快捷键、补全模式和交互流程已迁移到：
 
-#### 数据库连接配置（可选，增强功能）
-1. 打开 IDEA 的 Database 工具窗口（View -> Tool Windows -> Database）
-2. 添加数据源连接（支持 MySQL、PostgreSQL、Oracle、SQL Server 等）
-3. 测试连接成功后，插件会自动读取表结构信息
-4. 字段同步时会使用数据库列类型进行更准确的 JdbcType 映射
-5. 注意：此功能需要 IntelliJ IDEA Ultimate 版本
+- [`docs/product/usage-guide.md`](./docs/product/usage-guide.md)
 
-#### 字段同步
-1. 打开 Java 实体类文件
-2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Sync Fields to XML`（或按 `Ctrl+Alt+S`）
-3. 在弹窗中：
-  - 选择目标 XML 文件
-  - 选择目标 Statement ID（支持多选）
-  - 勾选要同步的字段（可全选/全不选）
-  - 可切换是否包含父类字段
-4. 预览同步结果，确认后执行
-5. 若同名 XML 分布在多个模块，候选列表会优先把当前实体所在模块的 XML 排到最前，其次是依赖模块里的 XML
+常用入口如下：
 
-#### 批量同步向导
-1. 打开任意一个 Java 实体类文件
-2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Batch Sync Wizard`
-3. 在首个向导对话框中勾选多个实体类
-4. 插件会按所选顺序逐项打开原有的字段/Statement 选择与预览界面
-5. 某一项失败或手动跳过时，向导会继续处理后续实体
-6. 全部处理结束后，会弹出汇总报告，列出成功、部分成功、失败、跳过的实体与原因
-
-#### 从 XML 反向生成字段
-1. 打开 Mapper XML 文件
-2. 将光标放在 `resultMap` 或 `base_column_list` 内，或直接选中其中一段 XML 文本
-3. 右键选择 `MyBatis Field Sync` -> `Generate Fields From XML`
-4. 插件会优先使用 `resultMap type/javaType/ofType` 推断实体类；若当前片段来自 `base_column_list`，则尝试根据 `mapper namespace` 推断实体
-5. 预览字段草稿与冲突项，确认后写入实体类
-
-#### 字段注释同步到 XML
-1. 打开 Java 实体类文件
-2. 右键选择 `MyBatis Field Sync` -> `Sync Field Comments to XML`
-3. 选择目标 XML、目标 Statement 与字段
-4. 预览 XML 注释变更，确认后执行
-5. 若字段已有同缩进注释，会就地替换；没有则自动插入注释行
-
-#### 字段重命名联动
-1. 在 Java 实体字段上执行 IDEA Rename
-2. 插件会自动更新对应 Mapper XML 中的：
-   - `#{field}`
-   - `${field}`
-   - `<if test="field != null">`
-   - `<result property="field">`
-3. 所有改动可直接使用 IDE Undo / Redo 回退或重做
-
-#### CRUD 模板生成
-1. 打开 Java 实体类文件
-2. 在编辑器类名处或空白处右键，选择 `MyBatis Field Sync` -> `Generate CRUD Template`（或按 `Ctrl+Alt+G`）
-3. 选择要生成的模板（ResultMap、Insert、Update、Delete、Select）
-4. 自动在对应的 Mapper XML 中生成标准 CRUD 语句（支持动态表名 `${tableName}`）
-
-#### 快捷键使用
-- **字段同步**：`Ctrl+Alt+S` - 快速打开字段同步对话框
-- **CRUD 生成**：`Ctrl+Alt+G` - 快速打开 CRUD 模板生成对话框
-- **查看历史**：`Ctrl+Alt+H` - 查看所有同步操作历史记录
-
-#### 同步历史记录
-1. 右键选择 `MyBatis Field Sync` -> `View Sync History` 或按 `Ctrl+Alt+H`
-2. 查看所有同步操作的时间、实体类、XML 文件、Statement ID 和字段列表
-3. 可点击 `Clear History` 清空历史记录
-
-#### JPA 风格方法名补全
-1. 在 **Mapper 接口** 中可用两种方式触发：
-   - 方式 A（骨架模式）：先写返回值再输入方法名前缀，例如 `List<Activity> findBy`
-   - 方式 B（裸输入模式）：直接输入 `findBy` / `countBy` / `deleteBy` / `existsBy`
-2. 若未自动弹出，请手动按 `Ctrl+Space` 触发 Basic Completion
-3. 选择需要的方法名（如 `findByNameAndAge`）
-4. 自动生成方法签名和对应的 XML SQL 语句
-   - 方式 A：仅补全方法名与参数签名
-   - 方式 B：自动补全完整方法声明（包含返回值）
-
-实体类解析规则（按优先级）：
-1. 优先从 Mapper 父接口泛型中解析实体，例如 `BaseMapper<User>`
-2. 若无泛型信息，则按接口名推断：`UserMapper` -> `User`
-3. 按实体短类名在项目内搜索并匹配
-
-#### MyBatis SQL 日志过滤预览（右侧入口）
-1. 在 IDEA 右侧工具栏打开 `MyBatis SQL Preview`
-2. 勾选 `Enable SQL Log Filter`（或中文环境下“启用 SQL 日志过滤”）
-3. 运行本地项目后，面板会从运行日志中过滤 `Preparing` / `Parameters` 并展示可读 SQL
-4. 点击 `Clear` 可清空预览文本框
-5. 取消勾选后停止采集与追加
+- `MyBatis Field Sync -> Sync Fields to XML`
+- `MyBatis Field Sync -> Batch Sync Wizard`
+- `MyBatis Field Sync -> Generate CRUD Template`
+- `MyBatis Field Sync -> Generate Fields From XML`
+- `MyBatis Field Sync -> View Sync History`
 
 ### 常见场景
 
-#### 场景 1：新增字段到已有 INSERT 语句
-```java
-// 实体类新增字段
-public class User {
-    private Long id;
-    private String name;
-    private String email;  // 新增
-    private Integer age;   // 新增
-}
-```
-右键同步后自动更新 XML：
-```xml
-<insert id="insert">
-    INSERT INTO user (id, name, email, age)
-    VALUES (#{id}, #{name}, #{email}, #{age})
-</insert>
-```
+典型示例和完整场景说明已迁移到：
 
-#### 场景 2：动态 UPDATE 语句增量补齐
-```xml
-<!-- 原有 -->
-<update id="update">
-    UPDATE user
-    <set>
-        <if test="name != null">name = #{name},</if>
-    </set>
-    WHERE id = #{id}
-</update>
-
-<!-- 同步后自动添加新字段，保持 if 风格 -->
-<update id="update">
-    UPDATE user
-    <set>
-        <if test="name != null">name = #{name},</if>
-        <if test="email != null">email = #{email},</if>
-        <if test="age != null">age = #{age},</if>
-    </set>
-    WHERE id = #{id}
-</update>
-```
-
-#### 场景 3：ResultMap 字段映射同步
-```xml
-<!-- 自动生成完整的字段映射，JdbcType 根据数据库列类型自动推断 -->
-<resultMap id="BaseResultMap" type="User">
-    <result column="id" property="id" jdbcType="BIGINT"/>
-    <result column="name" property="name" jdbcType="VARCHAR"/>
-    <result column="email" property="email" jdbcType="VARCHAR"/>
-    <result column="age" property="age" jdbcType="INTEGER"/>
-</resultMap>
-```
-
-#### 场景 4：数据库集成增强类型映射
-```java
-// 实体类
-public class User {
-    private Long id;
-    private String name;
-    private LocalDateTime createTime;  // Java 类型
-}
-```
-
-配置 Database 连接后，插件会读取数据库表结构：
-```sql
-CREATE TABLE user (
-    id BIGINT PRIMARY KEY,
-    name VARCHAR(100),
-    create_time DATETIME  -- 数据库类型
-);
-```
-
-同步时自动使用数据库类型映射：
-```xml
-<insert id="insert">
-    INSERT INTO user (id, name, create_time)
-    VALUES (#{id,jdbcType=BIGINT}, #{name,jdbcType=VARCHAR}, #{createTime,jdbcType=TIMESTAMP})
-</insert>
-```
-
-#### 场景 5：一键生成 CRUD 模板（支持动态表名）
-```java
-// 实体类
-public class User {
-    private Long id;
-    private String name;
-    private String email;
-    private Integer age;
-}
-```
-右键选择 `Generate MyBatis CRUD Template`，自动生成：
-```xml
-<resultMap id="BaseResultMap" type="com.example.User">
-    <result column="id" property="id" jdbcType="BIGINT"/>
-    <result column="name" property="name" jdbcType="VARCHAR"/>
-    <result column="email" property="email" jdbcType="VARCHAR"/>
-    <result column="age" property="age" jdbcType="INTEGER"/>
-</resultMap>
-
-<insert id="insert">
-    INSERT INTO ${tableName} (id, name, email, age)
-    VALUES (#{id,jdbcType=BIGINT}, #{name,jdbcType=VARCHAR}, #{email,jdbcType=VARCHAR}, #{age,jdbcType=INTEGER})
-</insert>
-
-<update id="update">
-    UPDATE ${tableName}
-    <set>
-        <if test="id != null">id = #{id,jdbcType=BIGINT},</if>
-        <if test="name != null">name = #{name,jdbcType=VARCHAR},</if>
-        <if test="email != null">email = #{email,jdbcType=VARCHAR},</if>
-        <if test="age != null">age = #{age,jdbcType=INTEGER},</if>
-    </set>
-    WHERE id = #{id}
-</update>
-
-<delete id="delete">
-    DELETE FROM ${tableName} WHERE id = #{id}
-</delete>
-
-<select id="selectById" resultMap="BaseResultMap">
-    SELECT id, name, email, age FROM ${tableName} WHERE id = #{id}
-</select>
-```
-
-**动态表名使用**：在 Mapper 接口方法中传入 `tableName` 参数即可动态指定表名，适用于分表场景。
-
-#### 场景 5：JPA 风格方法名自动补全
-```java
-// Mapper 接口
-public interface UserMapper {
-    // 输入 findBy 后自动提示：findByName, findByAge, findByNameAndAge 等
-    // 选择 findByNameAndAge 后自动生成：
-    List<User> findByNameAndAge(@Param("name") String name, @Param("age") Integer age);
-}
-```
-自动生成的 XML：
-```xml
-<select id="findByNameAndAge" resultMap="BaseResultMap">
-    SELECT * FROM user WHERE name = #{name} AND age = #{age}
-</select>
-```
-
-支持的方法前缀和操作符：
-- `findByAgeGreaterThan` → `WHERE age > #{age}`
-- `countByNameLike` → `SELECT COUNT(*) FROM user WHERE name LIKE #{name}`
-- `deleteByIdIn` → `DELETE FROM user WHERE id IN <foreach ...>#{item}</foreach>`
-- `findByCreatedAtBetween` → `WHERE created_at BETWEEN #{createdAtStart} AND #{createdAtEnd}`
-- `existsByDeletedAtIsNull` → `SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END ...`
-- `findByNameOrEmail` → `WHERE name = #{name} OR email = #{email}`
+- [`docs/product/usage-guide.md`](./docs/product/usage-guide.md)
 
 ## 测试
 
-### 单元测试
-```bash
-# 运行补全链路相关测试
-./gradlew test --tests "com.eagga.mybatisfieldsync.completion.*" -x instrumentCode -x instrumentTestCode -x classpathIndexCleanup
-```
+常用测试与验证命令已迁移到：
 
-### 编译检查
+- [`docs/development/testing-and-verification.md`](./docs/development/testing-and-verification.md)
+
+最小编译检查：
+
 ```bash
-./gradlew compileJava
+./gradlew compileJava --console=plain
 ```
 
 ## 核心架构
 
-- `SyncFieldsAction`
-  - 控制菜单显示条件
-  - 解析当前目标类
-  - 打开字段选择对话框
-  - 调用 Service 执行同步
-- `FieldSelectionDialog`
-  - 字段/目标 XML/Statement 交互入口
-- `FieldSyncService`（Project Service）
-  - 收集字段（含继承链）
-  - 搜索候选 XML
-  - 收集可选 Statement
-  - 按 Statement 类型执行同步写入
-- `util/*`
-  - 驼峰转下划线
-  - Java/JdbcType 映射
-  - TypeHandler 映射解析
-  - 缩进探测
-  - XML 格式策略解析
-  - Notification 封装
+核心架构说明已拆分到：
+
+- 项目地图：[`docs/architecture/project-map.md`](./docs/architecture/project-map.md)
+- 包职责：[`docs/architecture/package-responsibilities.md`](./docs/architecture/package-responsibilities.md)
+- 功能矩阵：[`docs/product/feature-matrix.md`](./docs/product/feature-matrix.md)
 
 ## i18n
 
@@ -545,6 +250,7 @@ IDEA 根据系统/IDE 语言自动选择资源包。
 - 触发入口注册在编辑器右键菜单（`EditorPopupMenu`）
 - 超复杂动态 SQL 场景虽已支持多层 `if/choose/foreach/trim` 分支补齐，但若同一语句混合大量自定义脚本片段或非常规标签组合，仍建议先预览再执行
 - `base_column_list` 通过 `sql` 标签 + `id` 包含 `column` 判定，若团队命名规则不同，可在 Service 中扩展
+- 更完整的边界说明见：[`docs/product/sync-boundaries.md`](./docs/product/sync-boundaries.md)
 
 ### 最佳实践
 1. **字段命名规范**：使用驼峰命名，插件自动转换为下划线（`userName` → `user_name`）
@@ -606,79 +312,12 @@ A: 先确认插件版本是否为你最新打包产物，并完成 IDE 重启；
 
 ## 后续可扩展方向
 
-### 代码生成增强
-- 从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
-- 批量同步多个实体类（带预览与结果汇总）
-- 缺失 Mapper/XML 的一键初始化生成
-- 支持自定义 CRUD / XML 模板
+后续规划已迁移到：
 
-### 智能重构
-- 字段重命名联动更新 XML 引用（`#{}`、`${}`、`test`、`resultMap property`）
-- 字段注释同步到 XML 注释（正向）
-- XML 格式化策略配置（缩进、换行、逗号风格）
-- 支持复杂动态 SQL 深层结构同步（多层 `if/choose/foreach/trim`）
-- 支持同步时清理已失效字段（可预览、可选择保留）
-- 支持 XML/Mapper 一致性检查与一键修复
-- 支持问题检查与 Quick Fix（Inspection / Intention Action）
-
-### 框架集成
-- 增强 MyBatis-Plus 注解支持（如更多注解属性和场景）
-- TypeHandler 自定义类型映射（生成与同步双向生效）
-- 增强 `<choose>/<when>/<otherwise>` 更复杂嵌套动态标签场景
-- 支持 resultMap 高级结构同步（`id/constructor/association/collection/discriminator`）
-- 支持更多 MyBatis-Plus 注解语义（如 `@TableField(value=...)`、`@TableLogic`、`@Version`、字段填充策略）
-
-### 用户体验
-- 支持多模块项目的 XML 自动查找（同模块优先、依赖模块次之）
-- 支持批量同步多个实体类（逐项预览、失败不中断、最终汇总）
+- [`docs/maintenance/roadmap.md`](./docs/maintenance/roadmap.md)
 
 ## TODO List
 
-### 高优先级
-- [x] 支持按注解忽略字段（如 `@TableField`、`@Transient`）
-- [x] 字段同步时保留已有字段的顺序合并新字段
-- [x] 支持 `resultMap` 的字段映射同步
-- [x] 支持 Mapper 和 XML 的互相跳转
-- [x] 支持 SQL 代码提示与错误标红提示
-- [x] 支持 mybatis sql 日志过滤预览功能
-- [x] 集成 IDEA Database 工具增强类型映射和补全
-- [x] 支持从 XML 反向生成实体类字段（`resultMap` / `base_column_list`）
-- [x] 支持字段注释同步到 XML 注释（正向）
-- [x] 支持字段重命名联动更新 XML 引用（refactor-safe）
-- [x] 支持复杂动态 SQL 深层结构同步（多层 `if/choose/foreach/trim`）
-  完成标准：不仅支持当前标准块，还能在多层嵌套下稳定补齐字段，不破坏 `open/close/separator/prefixOverrides` 等已有语义，并提供最小回归测试。
-- [ ] 支持 resultMap 高级结构同步（`id/constructor/association/collection/discriminator`）
-  完成标准：除普通 `<result>` 外，可识别并增量维护 `id`、构造器映射、嵌套对象映射和集合映射，避免只在扁平 DTO 场景可用。
-- [ ] 支持同步时清理已失效字段（可预览、可选择保留）
-  完成标准：除补新字段外，也能识别 XML 中已不存在于实体类的旧字段映射、旧列、旧赋值项，并在预览中明确标出删除动作，默认安全可控。
-- [ ] 支持 XML/Mapper 一致性检查与一键修复
-  完成标准：可扫描 namespace、statement id、resultMap 引用、参数名、字段引用不一致的问题，并给出检查结果或批量修复入口。
-- [ ] 支持问题检查与 Quick Fix（Inspection / Intention Action）
-  完成标准：对“实体字段已新增但 XML 未同步”“resultMap 缺字段”“占位符名失配”等问题，在编辑器中直接提示并可一键修复。
+详细 TODO 和优先级拆分已迁移到：
 
-### 中优先级
-- [x] 支持 `where` 条件片段同步
-- [x] 增加批量插入语句模板支持
-- [x] 支持自定义 JdbcType 映射配置
-- [x] 提供同步预览功能（先预览再执行）
-- [x] 支持 `<choose>/<when>/<otherwise>` 动态标签
-- [x] 支持 MyBatis-Plus 注解（`@TableName` 表名解析、`@TableId` 主键解析、`@TableField(exist=false)` 字段过滤）
-- [x] 支持生成常用 CRUD 模板
-- [x] 支持多模块项目的 XML 自动查找（module-aware）
-- [x] 支持批量同步多个实体类（Batch Sync Wizard）
-- [ ] 支持缺失 Mapper/XML 的一键初始化生成
-  完成标准：当实体只存在 Java 类、Mapper 接口或 XML 之一时，可按约定自动补齐其余骨架，至少生成 namespace、`BaseResultMap`、`Base_Column_List` 和基础 CRUD。
-- [ ] 支持自定义 CRUD / XML 模板
-  完成标准：用户可在设置中定义或覆盖 insert/update/select/resultMap 模板，生成逻辑优先使用模板，兼容现有字段映射、JdbcType、TypeHandler 和格式策略。
-- [ ] 支持更多 MyBatis-Plus 注解语义
-  完成标准：补充 `@TableField(value=...)`、`@TableLogic`、`@Version`、字段填充策略、枚举等真实项目常见语义，不再只停留在 `@TableName/@TableId/@TableField(exist=false)`。
-
-### 低优先级
-- [x] 支持动态表名场景
-- [x] 添加快捷键支持
-- [x] 提供同步历史记录功能
-- [x] 支持生成 Mapper 接口方法
-- [x] 支持 XML 格式化策略配置（缩进/换行/逗号风格）
-  完成标准：设置页可配置格式策略，同步后输出稳定且不破坏现有风格。
-- [x] 支持 TypeHandler 自定义类型映射（生成与同步双向生效）
-  完成标准：配置后自动生成 `typeHandler` 属性，并与 `jdbcType` 配置兼容。
+- [`docs/maintenance/roadmap.md`](./docs/maintenance/roadmap.md)

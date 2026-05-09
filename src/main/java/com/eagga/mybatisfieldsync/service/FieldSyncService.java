@@ -3,6 +3,7 @@ package com.eagga.mybatisfieldsync.service;
 import com.eagga.mybatisfieldsync.database.DatabaseFieldEnhancer;
 import com.eagga.mybatisfieldsync.i18n.MyBatisFieldSyncBundle;
 import com.eagga.mybatisfieldsync.model.FieldInfo;
+import com.eagga.mybatisfieldsync.model.StaleFieldInfo;
 import com.eagga.mybatisfieldsync.model.StatementInfo;
 import com.eagga.mybatisfieldsync.model.SyncException;
 import com.eagga.mybatisfieldsync.util.FieldIgnoreUtil;
@@ -1633,6 +1634,472 @@ public final class FieldSyncService {
                 out.add(subTag);
             }
             findNestedTagsByName(subTag, tagName, out);
+        }
+    }
+
+    // ==================== Stale Field Detection & Removal ====================
+
+    /**
+     * 检测指定 Statement 中已失效的字段引用（在实体类中不再存在的字段）。
+     */
+    public @NotNull List<StaleFieldInfo> detectStaleFields(@NotNull StatementInfo statementInfo,
+            @NotNull List<FieldInfo> entityFields) {
+        Set<String> validFieldNames = new HashSet<>();
+        Set<String> validColumnNames = new HashSet<>();
+        for (FieldInfo field : entityFields) {
+            validFieldNames.add(field.name());
+            validColumnNames.add(NameUtil.camelToSnake(field.name()).toLowerCase(Locale.ROOT));
+        }
+
+        XmlTag statementTag = statementInfo.tag();
+        String tagName = statementTag.getName().toLowerCase(Locale.ROOT);
+        String id = statementInfo.id();
+
+        List<StaleFieldInfo> staleFields = new ArrayList<>();
+
+        if ("resultmap".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("result")) {
+            detectStaleResultMap(statementTag, id, validFieldNames, validColumnNames, staleFields);
+        } else if ("insert".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("insert")) {
+            detectStaleInsert(statementTag, id, validFieldNames, validColumnNames, staleFields);
+        } else if ("update".equals(tagName) || id.toLowerCase(Locale.ROOT).contains("update")) {
+            detectStaleUpdate(statementTag, id, validFieldNames, validColumnNames, staleFields);
+        } else if ("sql".equals(tagName) && id.toLowerCase(Locale.ROOT).contains("column")) {
+            detectStaleBaseColumnList(statementTag, id, validColumnNames, staleFields);
+        } else if (id.toLowerCase(Locale.ROOT).contains("where") || !findNestedTagsByName(statementTag, "where").isEmpty()) {
+            detectStaleWhere(statementTag, id, validFieldNames, validColumnNames, staleFields);
+        }
+
+        return staleFields;
+    }
+
+    /**
+     * 从 Statement 中移除已失效字段引用。在 WriteCommandAction 中执行。
+     */
+    public void removeStaleFieldsInWriteCommand(@NotNull XmlFile xmlFile,
+            @NotNull StatementInfo statementInfo,
+            @NotNull List<StaleFieldInfo> staleFields) {
+        if (staleFields.isEmpty()) {
+            return;
+        }
+        WriteCommandAction.runWriteCommandAction(project,
+                MyBatisFieldSyncBundle.message("action.cleanStale.text"),
+                null,
+                () -> removeStaleFields(statementInfo.tag(), staleFields),
+                xmlFile);
+    }
+
+    /**
+     * 直接移除已失效字段引用（调用方需确保已在写操作上下文中）。
+     */
+    public void removeStaleFieldsDirect(@NotNull StatementInfo statementInfo,
+            @NotNull List<StaleFieldInfo> staleFields) {
+        if (staleFields.isEmpty()) {
+            return;
+        }
+        removeStaleFields(statementInfo.tag(), staleFields);
+    }
+
+    private void removeStaleFields(@NotNull XmlTag statementTag, @NotNull List<StaleFieldInfo> staleFields) {
+        for (StaleFieldInfo stale : staleFields) {
+            switch (stale.type()) {
+                case RESULT_MAPPING -> removeStaleResultMapping(statementTag, stale);
+                case INSERT_COLUMN -> removeStaleInsertColumn(statementTag, stale);
+                case INSERT_VALUE -> removeStaleInsertValue(statementTag, stale);
+                case UPDATE_ASSIGNMENT -> removeStaleUpdateAssignment(statementTag, stale);
+                case WHERE_CONDITION -> removeStaleWhereCondition(statementTag, stale);
+                case BASE_COLUMN -> removeStaleBaseColumn(statementTag, stale);
+            }
+        }
+    }
+
+    // --- Detection helpers ---
+
+    private void detectStaleResultMap(@NotNull XmlTag tag, @NotNull String statementId,
+            @NotNull Set<String> validProperties, @NotNull Set<String> validColumns,
+            @NotNull List<StaleFieldInfo> out) {
+        List<XmlTag> resultTags = findNestedTagsByName(tag, "result");
+        resultTags.addAll(findNestedTagsByName(tag, "id"));
+        for (XmlTag resultTag : resultTags) {
+            String property = resultTag.getAttributeValue("property");
+            String column = resultTag.getAttributeValue("column");
+            if (property != null && !property.isBlank() && !validProperties.contains(property)) {
+                out.add(new StaleFieldInfo(property, column, statementId, StaleFieldInfo.StaleType.RESULT_MAPPING));
+            }
+        }
+    }
+
+    private void detectStaleInsert(@NotNull XmlTag tag, @NotNull String statementId,
+            @NotNull Set<String> validProperties, @NotNull Set<String> validColumns,
+            @NotNull List<StaleFieldInfo> out) {
+        String fullText = tag.getText();
+        // Detect stale #{property} placeholders
+        Pattern propertyPattern = Pattern.compile("#\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\b");
+        Matcher matcher = propertyPattern.matcher(fullText);
+        Set<String> seenProperties = new HashSet<>();
+        while (matcher.find()) {
+            String property = matcher.group(1);
+            // Skip item.xxx patterns (batch insert)
+            if (!validProperties.contains(property) && !seenProperties.contains(property)
+                    && !property.equals("item") && !fullText.contains("#{item." + property)) {
+                // Check it's not a prefixed property like item.xxx
+                int start = matcher.start();
+                if (start > 0 && fullText.charAt(start - 1) == '.') {
+                    continue;
+                }
+                // Verify the column counterpart is also stale
+                String column = NameUtil.camelToSnake(property);
+                if (!validColumns.contains(column.toLowerCase(Locale.ROOT))) {
+                    seenProperties.add(property);
+                    out.add(new StaleFieldInfo(property, column, statementId, StaleFieldInfo.StaleType.INSERT_VALUE));
+                }
+            }
+        }
+        // Detect stale columns
+        detectStaleColumnsInText(fullText, statementId, validColumns, StaleFieldInfo.StaleType.INSERT_COLUMN, out);
+    }
+
+    private void detectStaleUpdate(@NotNull XmlTag tag, @NotNull String statementId,
+            @NotNull Set<String> validProperties, @NotNull Set<String> validColumns,
+            @NotNull List<StaleFieldInfo> out) {
+        String fullText = tag.getText();
+        // Look for column = #{property} patterns
+        Pattern assignPattern = Pattern.compile(
+                "(?i)`?([A-Za-z_][A-Za-z0-9_]*)`?\\s*=\\s*#\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\b");
+        Matcher matcher = assignPattern.matcher(fullText);
+        Set<String> seen = new HashSet<>();
+        while (matcher.find()) {
+            String column = matcher.group(1);
+            String property = matcher.group(2);
+            if (!validProperties.contains(property) && !seen.contains(property)
+                    && !validColumns.contains(column.toLowerCase(Locale.ROOT))) {
+                seen.add(property);
+                out.add(new StaleFieldInfo(property, column, statementId, StaleFieldInfo.StaleType.UPDATE_ASSIGNMENT));
+            }
+        }
+    }
+
+    private void detectStaleWhere(@NotNull XmlTag tag, @NotNull String statementId,
+            @NotNull Set<String> validProperties, @NotNull Set<String> validColumns,
+            @NotNull List<StaleFieldInfo> out) {
+        String fullText = tag.getText();
+        // Look for column = #{property} in where conditions
+        Pattern condPattern = Pattern.compile(
+                "(?i)`?([A-Za-z_][A-Za-z0-9_]*)`?\\s*=\\s*#\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\b");
+        Matcher matcher = condPattern.matcher(fullText);
+        Set<String> seen = new HashSet<>();
+        while (matcher.find()) {
+            String column = matcher.group(1);
+            String property = matcher.group(2);
+            if (!validProperties.contains(property) && !seen.contains(property)
+                    && !validColumns.contains(column.toLowerCase(Locale.ROOT))) {
+                seen.add(property);
+                out.add(new StaleFieldInfo(property, column, statementId, StaleFieldInfo.StaleType.WHERE_CONDITION));
+            }
+        }
+    }
+
+    private void detectStaleBaseColumnList(@NotNull XmlTag tag, @NotNull String statementId,
+            @NotNull Set<String> validColumns, @NotNull List<StaleFieldInfo> out) {
+        String body = tag.getValue().getText();
+        detectStaleColumnsInText(body, statementId, validColumns, StaleFieldInfo.StaleType.BASE_COLUMN, out);
+    }
+
+    private void detectStaleColumnsInText(@NotNull String text, @NotNull String statementId,
+            @NotNull Set<String> validColumns, @NotNull StaleFieldInfo.StaleType type,
+            @NotNull List<StaleFieldInfo> out) {
+        // Remove XML tags and comments for column parsing
+        String cleaned = text.replaceAll("(?is)<!--.*?-->", " ")
+                .replaceAll("(?is)<[^>]+>", " ");
+        // Split by comma and check each token
+        String[] tokens = cleaned.split(",");
+        Set<String> seen = new HashSet<>();
+        for (String token : tokens) {
+            String trimmed = token.replaceAll("[\\r\\n\\t]", " ").trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            // Strip alias (AS xxx or just trailing word)
+            String columnCandidate = trimmed.replaceAll("(?i)\\s+as\\s+\\S+$", "").trim();
+            // Remove backticks and table prefix
+            columnCandidate = columnCandidate.replace("`", "").replace("\"", "");
+            int dotIdx = columnCandidate.lastIndexOf('.');
+            if (dotIdx >= 0) {
+                columnCandidate = columnCandidate.substring(dotIdx + 1);
+            }
+            // Skip non-identifier tokens (expressions, functions, etc.)
+            if (!columnCandidate.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                continue;
+            }
+            String lower = columnCandidate.toLowerCase(Locale.ROOT);
+            if (!validColumns.contains(lower) && !seen.contains(lower)) {
+                // Skip common SQL keywords that might appear
+                if (isCommonSqlKeyword(lower)) {
+                    continue;
+                }
+                seen.add(lower);
+                String property = XmlFieldSyncSupport.snakeToCamel(columnCandidate);
+                out.add(new StaleFieldInfo(property, columnCandidate, statementId, type));
+            }
+        }
+    }
+
+    static boolean isCommonSqlKeyword(@NotNull String token) {
+        return Set.of("select", "from", "where", "and", "or", "not", "in", "is", "null",
+                "values", "set", "insert", "into", "update", "delete", "as", "on",
+                "join", "left", "right", "inner", "outer", "group", "by", "order",
+                "having", "limit", "offset", "between", "like", "exists", "case",
+                "when", "then", "else", "end", "distinct", "count", "sum", "avg",
+                "max", "min", "asc", "desc", "true", "false").contains(token);
+    }
+
+    // --- Removal helpers ---
+
+    private void removeStaleResultMapping(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        List<XmlTag> tags = new ArrayList<>();
+        tags.addAll(findNestedTagsByName(statementTag, "result"));
+        tags.addAll(findNestedTagsByName(statementTag, "id"));
+        for (XmlTag tag : tags) {
+            String property = tag.getAttributeValue("property");
+            if (stale.property().equals(property)) {
+                // Also remove the parent <if> tag if it wraps only this result
+                XmlTag parent = tag.getParentTag();
+                if (parent != null && "if".equalsIgnoreCase(parent.getName())
+                        && parent.getSubTags().length == 1) {
+                    parent.delete();
+                } else {
+                    tag.delete();
+                }
+                return;
+            }
+        }
+    }
+
+    private void removeStaleInsertColumn(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        String column = stale.column() != null ? stale.column() : NameUtil.camelToSnake(stale.property());
+        removeColumnFromTag(statementTag, column);
+    }
+
+    private void removeStaleInsertValue(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        removePropertyPlaceholderFromTag(statementTag, stale.property());
+    }
+
+    private void removeStaleUpdateAssignment(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        String column = stale.column() != null ? stale.column() : NameUtil.camelToSnake(stale.property());
+        removeAssignmentFromTag(statementTag, stale.property(), column);
+    }
+
+    private void removeStaleWhereCondition(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        String column = stale.column() != null ? stale.column() : NameUtil.camelToSnake(stale.property());
+        removeConditionFromTag(statementTag, stale.property(), column);
+    }
+
+    private void removeStaleBaseColumn(@NotNull XmlTag statementTag, @NotNull StaleFieldInfo stale) {
+        String column = stale.column() != null ? stale.column() : NameUtil.camelToSnake(stale.property());
+        String body = statementTag.getValue().getText();
+        String updated = removeColumnEntry(body, column);
+        if (!updated.equals(body)) {
+            statementTag.getValue().setText(updated);
+        }
+    }
+
+    private void removeColumnFromTag(@NotNull XmlTag root, @NotNull String column) {
+        // Try to remove from <if> tags first
+        for (XmlTag ifTag : findAllIfTagsRecursively(root)) {
+            String ifText = ifTag.getValue().getText();
+            Pattern colPattern = Pattern.compile("(?i)(^|[^A-Za-z0-9_`])`?" + Pattern.quote(column) + "`?\\s*,?");
+            if (colPattern.matcher(ifText).find()) {
+                ifTag.delete();
+                return;
+            }
+        }
+        // Try to remove from trim/plain text
+        removeColumnFromTextContainers(root, column);
+    }
+
+    private void removePropertyPlaceholderFromTag(@NotNull XmlTag root, @NotNull String property) {
+        // Try to remove from <if> tags first
+        for (XmlTag ifTag : findAllIfTagsRecursively(root)) {
+            String ifText = ifTag.getValue().getText();
+            if (ifText.contains("#{" + property) || ifText.contains("#{ " + property)) {
+                ifTag.delete();
+                return;
+            }
+        }
+        // Try to remove from trim/plain text
+        removeValueFromTextContainers(root, property);
+    }
+
+    private void removeAssignmentFromTag(@NotNull XmlTag root, @NotNull String property, @NotNull String column) {
+        // Try to remove from <if> tags
+        for (XmlTag ifTag : findAllIfTagsRecursively(root)) {
+            String ifText = ifTag.getText();
+            Pattern assignPat = Pattern.compile("(?i)`?" + Pattern.quote(column) + "`?\\s*=\\s*#\\{\\s*"
+                    + Pattern.quote(property) + "\\b");
+            if (assignPat.matcher(ifText).find()) {
+                ifTag.delete();
+                return;
+            }
+        }
+        // Remove from plain text in set/trim containers
+        removeAssignmentFromTextContainers(root, property, column);
+    }
+
+    private void removeConditionFromTag(@NotNull XmlTag root, @NotNull String property, @NotNull String column) {
+        // Try to remove from <if> tags
+        List<XmlTag> whereTags = findNestedTagsByName(root, "where");
+        XmlTag target = whereTags.isEmpty() ? root : whereTags.get(0);
+        for (XmlTag ifTag : findAllIfTagsRecursively(target)) {
+            String ifText = ifTag.getText();
+            Pattern condPat = Pattern.compile("(?i)`?" + Pattern.quote(column) + "`?\\s*=\\s*#\\{\\s*"
+                    + Pattern.quote(property) + "\\b");
+            if (condPat.matcher(ifText).find()) {
+                ifTag.delete();
+                return;
+            }
+        }
+        // Remove from plain text
+        removeConditionFromTextContainers(target, property, column);
+    }
+
+    private void removeColumnFromTextContainers(@NotNull XmlTag root, @NotNull String column) {
+        // Process trim tags and the root itself
+        List<XmlTag> trimTags = findNestedTagsByName(root, "trim");
+        for (XmlTag trim : trimTags) {
+            String body = trim.getValue().getText();
+            String updated = removeColumnEntry(body, column);
+            if (!updated.equals(body)) {
+                trim.getValue().setText(updated);
+                return;
+            }
+        }
+        // Try root body
+        String body = root.getValue().getText();
+        String updated = removeColumnEntry(body, column);
+        if (!updated.equals(body)) {
+            root.getValue().setText(updated);
+        }
+    }
+
+    private void removeValueFromTextContainers(@NotNull XmlTag root, @NotNull String property) {
+        List<XmlTag> trimTags = findNestedTagsByName(root, "trim");
+        for (XmlTag trim : trimTags) {
+            String body = trim.getValue().getText();
+            String updated = removeValueEntry(body, property);
+            if (!updated.equals(body)) {
+                trim.getValue().setText(updated);
+                return;
+            }
+        }
+        // Also check foreach tags
+        List<XmlTag> foreachTags = findNestedTagsByName(root, "foreach");
+        for (XmlTag foreach : foreachTags) {
+            List<XmlTag> innerTrims = findNestedTagsByName(foreach, "trim");
+            for (XmlTag trim : innerTrims) {
+                String body = trim.getValue().getText();
+                String updated = removeValueEntry(body, property);
+                if (!updated.equals(body)) {
+                    trim.getValue().setText(updated);
+                    return;
+                }
+            }
+        }
+        String body = root.getValue().getText();
+        String updated = removeValueEntry(body, property);
+        if (!updated.equals(body)) {
+            root.getValue().setText(updated);
+        }
+    }
+
+    private void removeAssignmentFromTextContainers(@NotNull XmlTag root, @NotNull String property,
+            @NotNull String column) {
+        List<XmlTag> setTags = findNestedTagsByName(root, "set");
+        for (XmlTag setTag : setTags) {
+            String body = setTag.getValue().getText();
+            String updated = removeAssignmentEntry(body, property, column);
+            if (!updated.equals(body)) {
+                setTag.getValue().setText(updated);
+                return;
+            }
+        }
+        List<XmlTag> trimTags = findNestedTagsByName(root, "trim");
+        for (XmlTag trim : trimTags) {
+            String body = trim.getValue().getText();
+            String updated = removeAssignmentEntry(body, property, column);
+            if (!updated.equals(body)) {
+                trim.getValue().setText(updated);
+                return;
+            }
+        }
+    }
+
+    private void removeConditionFromTextContainers(@NotNull XmlTag root, @NotNull String property,
+            @NotNull String column) {
+        String body = root.getValue().getText();
+        String updated = removeConditionEntry(body, property, column);
+        if (!updated.equals(body)) {
+            root.getValue().setText(updated);
+        }
+    }
+
+    @NotNull String removeColumnEntry(@NotNull String body, @NotNull String column) {
+        // Match: column, or ,column at end
+        Pattern pattern = Pattern.compile(
+                "(?im)^[ \\t]*`?" + Pattern.quote(column) + "`?\\s*,?[ \\t]*\\r?\\n?|"
+                        + ",\\s*`?" + Pattern.quote(column) + "`?(?=\\s*$|\\s*\\n)",
+                Pattern.CASE_INSENSITIVE);
+        String result = pattern.matcher(body).replaceFirst("");
+        // Clean up double commas or leading/trailing commas
+        result = result.replaceAll(",\\s*,", ",");
+        result = result.replaceAll("(?m)^\\s*,", "");
+        return result;
+    }
+
+    @NotNull String removeValueEntry(@NotNull String body, @NotNull String property) {
+        // Match #{property...}, possibly with trailing comma
+        Pattern pattern = Pattern.compile(
+                "(?im)^[ \\t]*#\\{\\s*" + Pattern.quote(property) + "[^}]*}\\s*,?[ \\t]*\\r?\\n?|"
+                        + ",\\s*#\\{\\s*" + Pattern.quote(property) + "[^}]*}",
+                Pattern.CASE_INSENSITIVE);
+        String result = pattern.matcher(body).replaceFirst("");
+        result = result.replaceAll(",\\s*,", ",");
+        result = result.replaceAll("(?m)^\\s*,", "");
+        return result;
+    }
+
+    @NotNull String removeAssignmentEntry(@NotNull String body, @NotNull String property,
+            @NotNull String column) {
+        // Match: column = #{property...}, with optional trailing comma
+        Pattern pattern = Pattern.compile(
+                "(?im)^[ \\t]*`?" + Pattern.quote(column) + "`?\\s*=\\s*#\\{\\s*"
+                        + Pattern.quote(property) + "[^}]*}\\s*,?[ \\t]*\\r?\\n?",
+                Pattern.CASE_INSENSITIVE);
+        String result = pattern.matcher(body).replaceFirst("");
+        result = result.replaceAll(",\\s*,", ",");
+        return result;
+    }
+
+    @NotNull String removeConditionEntry(@NotNull String body, @NotNull String property,
+            @NotNull String column) {
+        // Match: AND column = #{property...}
+        Pattern pattern = Pattern.compile(
+                "(?im)^[ \\t]*(and\\s+)?`?" + Pattern.quote(column) + "`?\\s*=\\s*#\\{\\s*"
+                        + Pattern.quote(property) + "[^}]*}[ \\t]*\\r?\\n?",
+                Pattern.CASE_INSENSITIVE);
+        return pattern.matcher(body).replaceFirst("");
+    }
+
+    private @NotNull List<XmlTag> findAllIfTagsRecursively(@NotNull XmlTag root) {
+        List<XmlTag> result = new ArrayList<>();
+        collectIfTags(root, result);
+        return result;
+    }
+
+    private void collectIfTags(@NotNull XmlTag root, @NotNull List<XmlTag> out) {
+        for (XmlTag subTag : root.getSubTags()) {
+            if ("if".equalsIgnoreCase(subTag.getName())) {
+                out.add(subTag);
+            }
+            collectIfTags(subTag, out);
         }
     }
 

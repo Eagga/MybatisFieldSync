@@ -1,6 +1,10 @@
 .gradle/
+.gradle-user-home/
 build/
 out/
 .idea/
 *.iml
 .intellijPlatform/
+hs_err_pid*.log
+chain.crt
+private.pem
